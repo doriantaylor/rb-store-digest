@@ -32,4 +32,7 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency 'rspec',   '~> 3.0'
 
   # stuff we use
+  spec.add_runtime_dependency 'base32',    '>= 0.3.2'
+  spec.add_runtime_dependency 'lmdb',      '>= 0.5.0' # my hacks
+  spec.add_runtime_dependency 'mimemagic', '>= 0.3.3'
 end
