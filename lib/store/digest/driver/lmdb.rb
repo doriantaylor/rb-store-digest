@@ -2,8 +2,8 @@ require 'store/digest/driver'
 require 'store/digest/blob/filesystem'
 require 'store/digest/meta/lmdb'
 
-class Store::Digest::Driver::LMDB < Store::Digest::Driver
-  include Blob::FileSystem
-  include Meta::LMDB
-
+module Store::Digest::Driver::LMDB
+  include Store::Digest::Driver
+  include Store::Digest::Blob::FileSystem
+  include Store::Digest::Meta::LMDB
 end

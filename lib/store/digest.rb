@@ -6,6 +6,8 @@ require 'uri/ni'
 require 'lmdb'
 require 'mimemagic'
 
+require 'store/digest/driver'
+
 class Store::Digest
   private
 
@@ -31,18 +33,29 @@ class Store::Digest
     encoding: 'Content Encoding',
   }.freeze
 
+  FLAG  = %i[content-type charset content-encoding syntax].freeze
+  STATE = %i[unverified invalid recheck valid].freeze
+
   public
 
   # Initialize a storage
   def initialize **options
+    driver = options.delete(:driver) || Store::Digest::Driver::LMDB
+    warn driver.ancestors.inspect
+    raise ArgumentError,
+      "Driver #{driver} is not a Store::Digest::Driver" unless
+      driver.ancestors.include? Store::Digest::Driver
+    extend driver
+
     # load a driver
     # initialize driver stuff
+    #super(**options)
   end
 
   #
   def add obj
     transaction do
-      
+      obj = coerce_object obj
     end
   end
 
@@ -53,7 +66,13 @@ class Store::Digest
   #
   def remove obj, forget: false
     # remove blob and mark metadata entry as deleted
-    
+    transaction do
+      obj = coerce_object obj
+      forget ? remove_meta(obj) : mark_deleted(obj)
+      remove_blob
+    end
+
+    obj
   end
 
   # Remove an object from the store and "forget" it ever existed,
@@ -63,7 +82,7 @@ class Store::Digest
     remove obj, forget: true
   end
 
-  #
+  # Return statistics on the store
   def stats
   end
 
@@ -83,7 +102,7 @@ class Store::Digest
       digests[symbol]
     end
 
-    alias_method :digest, :"[]"
+    alias_method :"[]", :digest
 
     # Returns true if the content type has been checked.
     def type_checked?
@@ -126,7 +145,7 @@ class Store::Digest
       @flags & (SYNTAX_CHECKED|SYNTAX_VALID)
     end
 
-    # Outputs a string representation of the
+    # Outputs a human-readable string representation of the object.
     def to_s
       out = "#{self.class}\n  Digests:\n"
 
@@ -140,14 +159,11 @@ class Store::Digest
         out << "  #{LABELS[o]}: #{val}\n" if val
       end
 
-      # now the validations
-      a = %w[content-type charset content-encoding syntax]
-      v = %w[unverified invalid recheck valid]
-
+      # now the validatio
       out << "Validation:\n"
-      a.each_index do |i|
+      FLAG.each_index do |i|
         x = f >> (3 - i) & 3
-        out << ("    %-16s: %s\n" % [a[i], v[x]])
+        out << ("    %-16s: %s\n" % [FLAG[i], STATE[x]])
       end
 
       out
