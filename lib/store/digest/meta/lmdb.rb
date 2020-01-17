@@ -30,7 +30,7 @@ module Store::Digest::Meta::LMDB
     raise ArgumentError, 'Mapsize must be a positive integer' unless
       mapsize.is_a? Integer and mapsize > 0
 
-    lmdbopts = { mode: 0666 &  ~umask, mapsize: mapsize }
+    lmdbopts = { mode: 0666 & ~umask, mapsize: mapsize }
     @lmdb = ::LMDB.new dir, lmdbopts
 
     algos = options[:algorithms] || DIGESTS.keys
@@ -67,7 +67,7 @@ module Store::Digest::Meta::LMDB
         @dbs[:control][x] = [0].pack 'Q>' unless send(x.to_sym)
       end
 
-      # XXX we might actually wanna dupsort 
+      # XXX we might actually wanna dupsort the non-primary digests
       dbs = %i[type charset language encoding].map do |k|
         [k, [:dupsort]]
       end.to_h.merge(a.map { |k| [k, []] }.to_h)
@@ -106,7 +106,7 @@ module Store::Digest::Meta::LMDB
   def objects
     @lmdb.transaction do
       ret = @dbs[:control]['objects'] or return
-      ret.unpack1 'Q>'
+      ret.unpack1 'Q>' # 64-bit unsigned network-endian integer
     end
   end
 

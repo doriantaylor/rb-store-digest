@@ -69,7 +69,7 @@ module Store::Digest::Blob::FileSystem
   # @return [true] a throwaway return value
   # @raise [SystemCallError] as we are mucking with the file system
   def settle_blob bin, fh, mtime: nil, overwrite: false
-    # get the mtime
+    # get the mtimes
     mtime ||= Time.now
     mtime = case mtime
             when Time
