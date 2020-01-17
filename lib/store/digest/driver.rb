@@ -5,4 +5,10 @@ module Store::Digest::Driver
 
   # this is the only implementation we have so far
   autoload :LMDB, 'store/digest/driver/lmdb'
+
+  protected
+
+  def setup **options
+    raise NotImplementedError, 'gotta roll your own, holmes'
+  end
 end

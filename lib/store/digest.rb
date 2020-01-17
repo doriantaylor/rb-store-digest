@@ -41,21 +41,26 @@ class Store::Digest
   # Initialize a storage
   def initialize **options
     driver = options.delete(:driver) || Store::Digest::Driver::LMDB
-    warn driver.ancestors.inspect
+
     raise ArgumentError,
       "Driver #{driver} is not a Store::Digest::Driver" unless
       driver.ancestors.include? Store::Digest::Driver
+
     extend driver
 
-    # load a driver
-    # initialize driver stuff
-    #super(**options)
+    # 
+    setup(**options)
   end
 
   #
   def add obj
     transaction do
       obj = coerce_object obj
+      tmp = tmpfile
+      obj.scan do |buf|
+        tmp << buf
+      end
+      tmp.flush
     end
   end
 
@@ -97,6 +102,10 @@ class Store::Digest
 
     attr_reader :digests, :size, :type, :charset, :language, :encoding,
       :ctime, :mtime, :ptime, :dtime, :flags
+
+    def scan
+      # we put all the scanning stuff in here
+    end
 
     def digest symbol
       digests[symbol]

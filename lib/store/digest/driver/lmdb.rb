@@ -6,4 +6,10 @@ module Store::Digest::Driver::LMDB
   include Store::Digest::Driver
   include Store::Digest::Blob::FileSystem
   include Store::Digest::Meta::LMDB
+
+  protected
+
+  def setup **options
+    super
+  end
 end
