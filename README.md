@@ -83,10 +83,11 @@ For each object, immutable bookkeeping metadata include:
 User-manipulable metadata consists of:
 
 * Modification time (timestamp)
-* Content-type (MIME identifier)
-* Language (RFC5646 token, user-supplied)
-* Character set (optional token, e.g. utf-8, iso-8859-1, windows-1252)
-* Content-encoding (optional token, e.g. gzip, deflate)
+* Content-type (MIME identifier, e.g. `text/html`)
+* Language ([RFC5646](https://tools.ietf.org/html/rfc5646) token,
+  user-supplied, e.g. `en-ca`)
+* Character set (optional token, e.g. `utf-8`, `iso-8859-1`, `windows-1252`)
+* Content-encoding (optional token, e.g. `gzip`, `deflate`)
 * Flags (8-bit unsigned integer)
 
 There are four flags, each with two bits of information:
@@ -188,7 +189,7 @@ The first order of business is to create a search function for the
 various metadata elements. Then, probably a Rack app to put this whole
 business online (much like the one I wrote in Perl). Following that,
 probably start poking around at that maintenance daemon I mentioned in
-the other section.
+the other section, and whatever else I think is a good idea.
 
 Afterward, I will probably take the show on the road: write a version
 in Python and/or JavaScript, for example. Maybe look at other
