@@ -30,6 +30,15 @@ class Store::Digest
   def initialize **options
     driver = options.delete(:driver) || Store::Digest::Driver::LMDB
 
+    unless driver.is_a? Module
+      # coerce to symbol
+      driver = driver.to_s.to_sym
+      raise ArgumentError,
+        "There is no storage driver Store::Digest::Driver::#{driver}" unless
+        Store::Digest::Driver.const_defined? driver
+      driver = Store::Digest::Driver.const_get driver
+    end
+
     raise ArgumentError,
       "Driver #{driver} is not a Store::Digest::Driver" unless
       driver.ancestors.include? Store::Digest::Driver
@@ -51,6 +60,7 @@ class Store::Digest
   # Add an object to the store.
   # @note Prefabricated {Store::Digest::Object} instances will be rescanned.
   # @param obj [IO,File,Pathname,String,Store::Digest::Object] the object
+  # @return [Store::Digest::Object] The (potentially pre-existing) entry
   def add obj
     transaction do
       obj = coerce_object obj
@@ -59,9 +69,20 @@ class Store::Digest
       tmp = temp_blob
 
       # get our digests
-      obj.scan(digests: algorithms) { |buf| tmp << buf }
+      obj.scan(digests: algorithms, blocksize: 2**20) { |buf| tmp << buf }
+      obj.dtime = nil
       if h = set_meta(obj)
-        obj = Store::Digest::Object.new obj.content, **h
+        # replace the object
+
+        content = obj.content
+
+        # do this to prevent too many open files
+        if content.is_a? File
+          path = Pathname(content.path).expand_path
+          content = -> { path.open('rb') }
+        end
+
+        obj = Store::Digest::Object.new content, **h
 
         # now settle the blob into storage
         settle_blob obj[primary].digest, tmp, mtime: obj.mtime
@@ -77,13 +98,13 @@ class Store::Digest
     end
   end
 
-  #
+  # Retrieve an object from the store.
+  # @param 
   def get obj
     transaction do
       obj = coerce_object obj
-      h = get_meta obj
-      warn h.inspect
-      b = get_blob h[:digests][primary].digest
+      h = get_meta(obj) or break # bail if this does not exist
+      b = get_blob h[:digests][primary].digest # may be nil
       Store::Digest::Object.new b, **h
     end
   end
@@ -95,13 +116,15 @@ class Store::Digest
     unless obj.scanned?
       raise ArgumentError,
         'Cannot scan object because there is no content' unless obj.content?
-      obj.scan digests: digests
+      obj.scan digests: digests, blocksize: 2**20
     end
+
     # remove blob and mark metadata entry as deleted
     meta = nil
     transaction do
       meta = forget ? remove_meta(obj) : mark_deleted(obj)
     end
+
     if meta
       if blob = remove_blob(meta[:digest][primary])
         return Store::Digest::Object.new blob, **meta
@@ -122,5 +145,7 @@ class Store::Digest
   end
 
   class Stats
+    def to_s
+    end
   end
 end
