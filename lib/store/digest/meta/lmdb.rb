@@ -9,6 +9,7 @@ module Store::Digest::Meta::LMDB
 
   private
 
+  PRIMARY = :"sha-256"
   DIGESTS = {
     md5:       16,
     "sha-1":   20,
@@ -17,7 +18,44 @@ module Store::Digest::Meta::LMDB
     "sha-512": 64,
   }.freeze
 
-  PRIMARY = :"sha-256"
+  FORMAT = 'Q>NNNNCZ*Z*Z*Z*'.freeze
+  RECORD = %i[
+    size ctime mtime ptime dtime flags type language charset encoding].freeze
+  INTS   = %i[
+    size ctime mtime ptime dtime flags].map { |k| [k, :to_i] }.to_h.freeze
+
+  def inflate bin, rec
+    rec = rec.dup
+    digests = (algorithms - [primary]).map do |a|
+      uri = URI::NI.build(scheme: 'ni', path: "/#{a}")
+      uri.digest = rec.slice!(0, DIGESTS[a])
+      [a, uri]
+    end.to_h
+
+    # don't forget the primary!
+    digests[primary] = URI::NI.build(scheme: 'ni', path: "/#{primary}")
+    digests[primary].digest = bin
+
+    # size ctime mtime ptime dtime flags type language charset encoding
+    hash = RECORD.zip(rec.unpack(FORMAT)).to_h
+    hash[:digests] = digests
+
+    %i[ctime ptime mtime dtime].each do |k|
+      hash[k] = (hash[k] == 0) ? nil : Time.at(hash[k])
+    end
+
+    %i[type language charset encoding].each do |k|
+      hash[k] = nil if hash[k].empty?
+    end
+    hash
+  end
+
+  def deflate obj
+    obj = obj.to_h unless obj.is_a? Hash
+    algos = (algorithms - [primary]).map { |a| obj[:digests][a].digest }.join
+    rec   = RECORD.map { |k| v = obj[k]; v.send INTS.fetch(k, :to_s) }
+    algos + rec.pack(FORMAT)
+  end
 
   protected
 
@@ -81,12 +119,103 @@ module Store::Digest::Meta::LMDB
     @lmdb.sync
   end
 
+  # returns a metadata hash or nil if no changes have been made
+  def set_meta obj
+    raise ArgumentError,
+      'Object does not have a complete set of digests' unless
+      (algorithms - obj.algorithms).empty?
+    @lmdb.transaction do |t|
+      # noop if object is present and not deleted and no details have changed
+      bin  = obj[primary].digest
+      newh = obj.to_h
+      now  = Time.now
+
+      oldrec = @dbs[primary][bin]
+      newh   = if oldrec
+                 inflate(bin, oldrec).merge(newh) do |k, ov, nv|
+                   case k
+                   when :ctime then ov
+                   when :mtime, :ptime then nv || ov || now
+                   else nv
+                   end
+                 end
+               else
+                 %i[ctime mtime ptime].each { |k| newh[k] ||= now }
+                 newh
+               end
+      newrec = deflate newh
+
+      # this returns nil
+      break if newrec == oldrec
+
+      # these only need to be done if they haven't been done before
+      (algorithms - [primary]).each do |algo|
+        @dbs[algo][obj[algo].digest] = bin
+      end unless oldrec
+
+      # this only needs to be done if there are changes
+      @dbs[primary][bin] = newrec
+
+      t.commit
+
+      newh
+    end
+  end
+
+  def get_meta obj
+    @lmdb.transaction do
+      # find/inflate master record
+      algo = if obj[primary]
+               primary
+             else
+               raise ArgumentError, 'Object must have digests' unless
+                 obj.scanned?
+               obj.algorithms.sort do |a, b|
+                cmp = DIGESTS[b] <=> DIGESTS[a]
+                cmp == 0 ? a <=> b : cmp
+              end.first
+             end
+      bin = obj[algo].digest
+
+      unless algo == primary
+        bin = @dbs[algo][bin] or return
+      end
+
+      # actually raise maybe? because this should never happen
+      rec = @dbs[primary][bin] or return
+
+      # return just a hash of all the elements
+      inflate bin, rec
+    end
+  end
+
+  def remove_meta obj
+    @lmdb.transaction do
+      object_ok? obj
+
+      # delete the object
+    end
+  end
+
+  def mark_meta_deleted obj
+    @lmdb.transaction do
+      object_ok? obj
+      # find/inflate master record
+      # set dtime
+      # update master record
+    end
+  end
+
   public
+
+  def transaction &block
+    @lmdb.transaction(&block)
+  end
 
   # Return the set of algorithms initialized in the database.
   # @return [Array] the algorithms
   def algorithms
-    @lmdb.transaction do
+    @algorithms ||= @lmdb.transaction do
       ret = @dbs[:control]['algorithms'] or return
       ret.strip.split(/\s*,+\s*/).map(&:to_sym)
     end
@@ -95,7 +224,7 @@ module Store::Digest::Meta::LMDB
   # Return the primary digest algorithm.
   # @return [Symbol] the primary algorithm
   def primary
-    @lmdb.transaction do
+    @primary ||= @lmdb.transaction do
       ret = @dbs[:control]['primary'] or return
       ret.strip.to_sym
     end

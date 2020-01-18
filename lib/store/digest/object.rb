@@ -2,12 +2,48 @@ require 'store/digest/version'
 
 require 'uri'
 require 'uri/ni'
+require 'mimemagic'
+require 'mimemagic/overlay'
+
+class MimeMagic
+  # XXX erase this when these methods get added
+
+  unless self.method_defined? :binary?
+    def self.binary? thing
+      sample = nil
+
+      # get some stuff out of the IO or get a substring
+      if %i[tell seek read].all? { |m| thing.respond_to? m }
+        pos = thing.tell
+        thing.seek 0, 0
+        sample = thing.read 1024
+        thing.seek pos
+      elsif thing.respond_to? :to_s
+        sample = thing.to_s[0,1024]
+      else
+        raise ArgumentError, "Cannot sample an instance of {thing.class}"
+      end
+
+      # consider this to be 'binary' if empty
+      return true if sample.nil? or sample.empty?
+      # control codes minus ordinary whitespace
+      /[\x0-\x8\xe-\x1f\x7f]/n.match?(sample) ? true : false
+    end
+  end
+
+  unless self.method_defined? :default_type
+    def self.default_type thing
+      new self.binary?(thing) ? 'application/octet-stream' : 'text/plain'
+    end
+  end
+end
 
 class Store::Digest::Object
 
   private
 
-  BLOCKSIZE = 65536
+  SAMPLE    = 2**13 # must be big enough to detect ooxml
+  BLOCKSIZE = 2**16
 
   TOKEN = '[^\x0-\x20()<>@,;:\\\"/\[\]?=\x7f-\\xff]+'
 
@@ -42,8 +78,10 @@ class Store::Digest::Object
     encoding: 'Content Encoding',
   }.freeze
 
-  FLAG  = %i[content-type charset content-encoding syntax].freeze
-  STATE = %i[unverified invalid recheck valid].freeze
+  MANDATORY = %i[size ctime mtime ptime]
+  OPTIONAL  = %i[dtime type language charset encoding]
+  FLAG      = %i[content-type charset content-encoding syntax].freeze
+  STATE     = %i[unverified invalid recheck valid].freeze
 
   def coerce_time t, k
     case t
@@ -63,7 +101,7 @@ class Store::Digest::Object
   def coerce_token t, k
     t = t.to_s.strip.downcase
     pat, norm = TOKENS[k]
-    raise "#{k} does not match #{pat}" unless m = pat.match(x)
+    raise "#{k} does not match #{pat}" unless m = pat.match(t)
     norm.call m[1]
   end
 
@@ -77,9 +115,9 @@ class Store::Digest::Object
     # check input on content
     @content = case content
                when nil then nil
-               when IO, Proc then content
+               when IO, StringIO, Proc then content
                when String then StringIO.new content
-               when Pathname then -> { content.open('rb') }
+               when Pathname then -> { content.expand_path.open('rb') }
                else
                  raise ArgumentError,
                    "Cannot accept content given as #{content.class}"
@@ -122,7 +160,7 @@ class Store::Digest::Object
     # integers or Time or DateTime
     b = binding
     %i[ctime mtime ptime dtime].each do |k|
-      v = coerce_time(b.local_variable_get k, k)
+      v = coerce_time(b.local_variable_get(k), k)
       instance_variable_set "@#{k}", v
     end
 
@@ -148,7 +186,9 @@ class Store::Digest::Object
     end
   end
 
-  attr_reader :digests, :size, :type, :charset, :language, :encoding,
+  # XXX come up with a policy for these that isn't stupid, plus input sanitation
+  attr_reader :digests, :size
+  attr_accessor :type, :charset, :language, :encoding,
     :ctime, :mtime, :ptime, :dtime, :flags
 
   #
@@ -163,16 +203,18 @@ class Store::Digest::Object
       blocksize: BLOCKSIZE, &block
     # we put all the scanning stuff in here
     content = case content
-              when nil      then self.content
-              when IO       then content
-              when String   then StringIO.new content
-              when Pathname then content.open('rb')
-              when Proc     then content.call
+              when nil          then self.content
+              when IO, StringIO then content
+              when String       then StringIO.new content
+              when Pathname     then content.open('rb')
+              when Proc         then content.call
+              when -> x { %i[read seek pos].all? { |m| x.respond_to? m } }
+                content
               else
                 raise ArgumentError,
                   "Cannot scan content of type #{content.class}"
               end
-    content.binmode unless content.binmode?
+    content.binmode if content.respond_to? :binmode
 
     # sane default for mtime
     mtime ||= content.respond_to?(:mtime) ? content.mtime : Time.now
@@ -200,74 +242,129 @@ class Store::Digest::Object
     digests = digests.map { |d| [d, URI::NI.context(d)] }.to_h
 
     # sample for mime type checking
-    sample = StringIO.new
-    
+    sample = StringIO.new ''
+    @size  = 0
     while buf = content.read(blocksize)
-      sample << buf if sample.pos < 2**12
+      @size += buf.size
+      sample << buf if sample.pos < SAMPLE
       digests.values.each { |ctx| ctx << buf }
       block.call buf if block_given?
     end
 
-    @digests = digests.transform_values { |v| URI::NI.compute v }.freeze
+    # seek the content back to the front and store it
+    content.seek 0, 0
+    @content = content
+
+    # set up the digests
+    @digests = digests.map do |k, v|
+      [k, URI::NI.compute(v, algorithm: k).freeze]
+    end.to_h.freeze
+
+    # obtain the sampled content type
+    ts = MimeMagic.by_magic(sample) || MimeMagic.default_type(sample)
+    if content.respond_to? :path
+      # may as well use the path if it's available and more specific
+      ps = MimeMagic.by_path(content.path)
+      ts = ps if ps and ps.child_of?(ts)
+    end
+    @type = !type || ts.child_of?(type) ? ts.to_s : type
 
     self
   end
 
-  # 
+  # Return the algorithms used in the object.
+  # @return [Array]
+  def algorithms
+    (@digests || {}).keys.sort
+  end
+
+  # Return a particular digest. Returns nil if there is no match.
+  # @param symbol [Symbol, #to_s, #to_sym] the digest
+  # @return [Symbol, nil]
   def digest symbol
-    digests[symbol]
+    raise ArgumentError, "This method takes a symbol" unless
+      symbol.respond_to? :to_sym
+    digests[symbol.to_sym]
   end
 
   alias_method :"[]", :digest
 
-  # 
+  # Returns the content stored in the object.
+  # @return [IO]
   def content
-    content.is_a?(Proc) ? @content.call : @content
+    @content.is_a?(Proc) ? @content.call : @content
   end
 
+  # Determines if there is content embedded in the object.
+  # @return [false, true]
   def content?
     !!@content
   end
 
+  # Determines if the object has been scanned.
+  # @return [false, true]
+  def scanned?
+    !@digests.empty?
+  end
+
   # Returns true if the content type has been checked.
+  # @return [false, true]
   def type_checked?
     0 != @flags & TYPE_CHECKED
   end
 
   # Returns true if the content type has been checked _and_ is valid.
+  # @return [false, true]
   def type_valid?
     0 != @flags & (TYPE_CHECKED|TYPE_VALID)
   end
 
   # Returns true if the character set has been checked.
+  # @return [false, true]
   def charset_checked?
     0 != @flags & CHARSET_CHECKED
   end
 
   # Returns true if the character set has been checked _and_ is valid.
+  # @return [false, true]
   def charset_valid?
     0 != @flags & (CHARSET_CHECKED|CHARSET_VALID)
   end
 
   # Returns true if the content encoding (e.g. gzip, deflate) has
   # been checked.
+  # @return [false, true]
   def encoding_checked?
     0 != @flags & ENCODING_CHECKED
   end
 
   # Returns true if the content encoding has been checked _and_ is valid.
+  # @return [false, true]
   def encoding_valid?
     0 != @flags & (ENCODING_CHECKED|ENCODING_VALID)
   end
 
   # Returns true if the blob's syntax has been checked.
+  # @return [false, true]
   def syntax_checked?
     0 != @flags & SYNTAX_CHECKED
   end
 
   # Returns true if the blob's syntax has been checked _and_ is valid.
+  # @return [false, true]
   def syntax_valid?
     0 != @flags & (SYNTAX_CHECKED|SYNTAX_VALID)
+  end
+
+  # Return the object as a hash. Omits the content by default.
+  # @param content [false, true] include the content if true
+  # @return [Hash] the object as a hash
+  def to_h content: false
+    main = %i[content digests]
+    main.shift unless content
+    (main + MANDATORY + OPTIONAL + [:flags]).map do |k|
+      [k, send(k).dup]
+    end.to_h
   end
 
   # Outputs a human-readable string representation of the object.
@@ -275,20 +372,22 @@ class Store::Digest::Object
     out = "#{self.class}\n  Digests:\n"
 
     # disgorge the digests
-    digests.each { |d| out << "    #{digest d}\n" }
+    digests.values.sort { |a, b| a.to_s <=> b.to_s }.each do |d|
+      out << "    #{d}\n"
+    end
 
     # now the fields
-    MANDATORY.each { |m| out << "  #{LABELS[m]}: #{call m}\n" }
+    MANDATORY.each { |m| out << "  #{LABELS[m]}: #{send m}\n" }
     OPTIONAL.each do |o|
-      val = call o
+      val = send o
       out << "  #{LABELS[o]}: #{val}\n" if val
     end
 
     # now the validation statuses
     out << "Validation:\n"
     FLAG.each_index do |i|
-      x = f >> (3 - i) & 3
-      out << ("    %-16s: %s\n" % [FLAG[i], STATE[x]])
+      x = flags >> (3 - i) & 3
+      out << ("  %-16s: %s\n" % [FLAG[i], STATE[x]])
     end
 
     out

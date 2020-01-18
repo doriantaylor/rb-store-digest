@@ -26,12 +26,6 @@ module Store::Digest::Blob::FileSystem
     dir + TMP
   end
 
-  # Return an open tempfile in the designated temp directory
-  # @return [Tempfile]
-  def tempfile
-    Tempfile.new blob, tmp
-  end
-
   # Return a hash-pathed location of the blob, suitable for
   # case-insensitive file systems.
   # @param bin [String] The binary representation of the keying digest
@@ -60,6 +54,12 @@ module Store::Digest::Blob::FileSystem
     end
   end
 
+  # Return an open tempfile in the designated temp directory
+  # @return [Tempfile]
+  def temp_blob
+    Tempfile.new 'blob', tmp
+  end
+
   # Settle a blob from its temporary location to its permanent location.
   # @param bin [String] The binary representation of the keying digest
   # @param fh  [File] An open filehandle, presumably a temp file
@@ -72,10 +72,8 @@ module Store::Digest::Blob::FileSystem
     # get the mtimes
     mtime ||= Time.now
     mtime = case mtime
-            when Time
-              mtime.to_i
-            when Integer
-              mtime
+            when Time    then mtime.to_i
+            when Integer then mtime
             when -> x { x.respond_to? :to_time }
               mtime.to_time.to_i
             else
@@ -119,25 +117,30 @@ module Store::Digest::Blob::FileSystem
     raise "Blob #{hex} is not readable!" unless path.readable?
 
     # return a closure (maybe)
-    direct ? path.open : -> { path.open }
+    direct ? path.open('rb') : -> { path.open('rb') }
   end
 
   # Remove a blob based on its binary digest value.
   # @param bin [String] The binary representation of the keying digest
-  # @return [true] it's either this throwaway true or it will raise
+  # @return [File] reutnr
   # @raise  [SystemCallError] since it's mucking with the file system
   def remove_blob bin
     # XXX we should really flock the directory stack
     path = path_for bin
-    path.rm if path.exist?
+    ret  = if path.exist?
+             fh = path.open 'rb'
+             path.unlink
+             fh
+           end
 
+    # XXX we should really flock the directory stack
     dn = path.dirname.relative_path_from(store).to_s.split ?/
     dn.each_index.reverse_each do |i|
       subpath = store + dn.slice(0..i).join(?/)
       subpath.rmdir if subpath.exist? and subpath.empty?
     end
 
-    true
+    ret
   end
 
 end
