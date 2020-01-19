@@ -121,7 +121,7 @@ a desirable and likely future addition to it.
 ## API Documentation
 
 Generated and deposited
-[in the usual place](http://www.rubydoc.info/github/doriantaylor/rb-store-digest/).
+[in the usual place](http://www.rubydoc.info/github/doriantaylor/rb-store-digest/master).
 
 ## Design
 
@@ -187,9 +187,10 @@ likely be a convenient way to identify collision targets.
 
 The first order of business is to create a search function for the
 various metadata elements. Then, probably a Rack app to put this whole
-business online (much like the one I wrote in Perl). Following that,
-probably start poking around at that maintenance daemon I mentioned in
-the other section, and whatever else I think is a good idea.
+business online (much like the analogous one I wrote in Perl).
+Following that, probably start poking around at that maintenance
+daemon I mentioned in the other section, and whatever else I think is
+a good idea and not too much effort.
 
 Afterward, I will probably take the show on the road: write a version
 in Python and/or JavaScript, for example. Maybe look at other
@@ -201,12 +202,13 @@ When it is ready, you know how to do this:
 
     $ gem install store-digest
 
-Or, [download it off rubygems.org](https://rubygems.org/gems/store-digest).
+You will know when it's far enough along when you can [download it off
+rubygems.org](https://rubygems.org/gems/store-digest).
 
 ## Contributing
 
 Bug reports and pull requests are welcome at
-[the GitHub repository](https://github.com/doriantaylor/rb-store-digest).
+[the GitHub repository](https://github.com/doriantaylor/rb-store-digest/issues).
 
 ## Copyright & License
 

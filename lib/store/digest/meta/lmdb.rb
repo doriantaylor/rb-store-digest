@@ -23,6 +23,23 @@ module Store::Digest::Meta::LMDB
     size ctime mtime ptime dtime flags type language charset encoding].freeze
   INTS   = %i[
     size ctime mtime ptime dtime flags].map { |k| [k, :to_i] }.to_h.freeze
+  PACK   = {
+    # control records
+    objects:  'Q>',
+    deleted:  'Q>',
+    bytes:    'Q>',
+    # object records
+    size:     'Q>',
+    ctime:    ?N, # - also used in control
+    mtime:    ?N, # - ditto
+    ptime:    ?N,
+    dtime:    ?N,
+    flags:    ?C,
+    type:     'Z*',
+    language: 'Z*',
+    charset:  'Z*',
+    encoding: 'Z*',
+  }.transform_values(&:freeze).freeze
 
   def inflate bin, rec
     rec = rec.dup
@@ -74,6 +91,15 @@ module Store::Digest::Meta::LMDB
     @dbs[:control][key.to_s] = [nv].pack 'Q>'
 
     nv
+  end
+
+  def control_get key
+    key = key.to_sym
+    raise ArgumentError, "Invalid control key #{key}" unless
+      %[ctime mtime objects deleted bytes].include? key
+    if val = @dbs[:control][key.to_s]
+      val.unpack1 PACK[key]
+    end
   end
 
   def index_pack key
@@ -161,6 +187,13 @@ module Store::Digest::Meta::LMDB
       else
         pri = popt
         @dbs[:control]['primary'] = popt.to_s
+      end
+
+      now = Time.now
+      %w[ctime mtime].each do |t|
+        unless @dbs[:control].has? t
+          @dbs[:control][t] = [now.to_i].pack ?N
+        end
       end
 
       # clever if i do say so myself
@@ -299,7 +332,7 @@ module Store::Digest::Meta::LMDB
   def remove_meta obj
     @lmdb.transaction do |t|
       hash = get_meta(obj) or break
-      bin  = h[primary].digest
+      bin  = hash[:digests][primary].digest
       RECORD.each { |k| index_rm k, hash[k], bin }
       hash[:digests].each { |algo, uri| @dbs[algo].delete uri.digest }
 
@@ -319,9 +352,59 @@ module Store::Digest::Meta::LMDB
   end
 
   def mark_meta_deleted obj
-    obj = obj.to_h
-    obj[:dtime] = Time.now
-    set_meta obj
+    @lmdb.transaction do
+      # the object has to be in here to delete it
+      oldh = get_meta(obj) or break
+      # if the object is already "deleted" we do nothing
+      break if oldh[:dtime]
+
+      bin = oldh[:digests][primary].digest
+      now = Time.now
+
+      newh = oldh.merge(obj.to_h) do |k, ov, nv|
+        case k
+        when :digests then ov  # - old values are guaranteed complete
+        when :size    then ov  # - we don't trust the new value
+        when :type    then ov  # - this gets set by default
+        when :dtime   then now # - what we came here to do
+        else nv || ov
+        end
+      end
+
+      @dbs[primary][bin] = deflate(newh)
+      control_add :deleted, 1
+      control_add :bytes, -newh[:size] 
+
+      # okay now we update the indexes
+      RECORD.each do |k|
+        index_rm  k, oldh[k], bin if oldh and oldh[k] and oldh[k] != newh[k]
+        index_add k, newh[k], bin # will noop on nil
+      end
+
+      newh
+    end
+  end
+
+  def meta_get_stats
+    @lmdb.transaction do
+      h = %i[ctime mtime objects deleted bytes].map do |k|
+        [k, @dbs[:control][k.to_s].unpack1(PACK[k])]
+      end.to_h
+
+      # fix the times
+      %i[ctime mtime].each { |t| h[t] = Time.at h[t] }
+
+      # get counts on all the countables
+      h.merge!(%i[type language charset encoding].map do |d|
+        ["#{d}s".to_sym,
+          @dbs[d].keys.map { |k| [k, @dbs[d].cardinality(k)] }.to_h]
+      end.to_h)
+
+      # would love to do min/max size/dates/etc but that is going to
+      # take some lower-level cursor finessing
+
+      h
+    end
   end
 
   public

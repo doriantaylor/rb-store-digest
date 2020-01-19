@@ -116,17 +116,17 @@ class Store::Digest
     unless obj.scanned?
       raise ArgumentError,
         'Cannot scan object because there is no content' unless obj.content?
-      obj.scan digests: digests, blocksize: 2**20
+      obj.scan digests: algorithms, blocksize: 2**20
     end
 
     # remove blob and mark metadata entry as deleted
     meta = nil
     transaction do
-      meta = forget ? remove_meta(obj) : mark_deleted(obj)
+      meta = forget ? remove_meta(obj) : mark_meta_deleted(obj)
     end
 
     if meta
-      if blob = remove_blob(meta[:digest][primary])
+      if blob = remove_blob(meta[:digests][primary].digest)
         return Store::Digest::Object.new blob, **meta
       end
     end
@@ -142,10 +142,46 @@ class Store::Digest
 
   # Return statistics on the store
   def stats
+    Stats.new(**meta_get_stats)
   end
 
   class Stats
+    private
+
+    LABELS = {
+      charsets: "Character sets"
+    }
+
+    public
+
+    def initialize **options
+      # XXX help i am so lazy
+      options.each { |k, v| instance_variable_set "@#{k}", v }
+    end
+
     def to_s
+      out = <<-EOT
+#{self.class}
+  Statistics:
+    Created:         #{@ctime}
+    Last modified:   #{@mtime}
+    Total objects:   #{@objects}
+    Deleted records: #{@deleted}
+    Repository size: #{@bytes} bytes
+      EOT
+
+      %i[types languages charsets encodings].each do |k|
+        stats = instance_variable_get("@#{k}")
+        if stats and !stats.empty?
+          out << "  #{LABELS.fetch k, k.capitalize}:\n"
+          stats.keys.sort.each do |s|
+            out << "    #{s}: #{stats[s]}\n"
+          end
+        end
+      end
+
+      out
     end
   end
+
 end
