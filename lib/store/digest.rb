@@ -148,18 +148,37 @@ class Store::Digest
   class Stats
     private
 
+    # i dunno do you wanna come up with funny labels? here's where you put em
     LABELS = {
-      charsets: "Character sets"
-    }
+      charsets: "Character sets",
+    }.transform_values(&:freeze).freeze
+
+    # lol, petabytes
+    MAGNITUDES = %w[B KiB MiB GiB TiB PiB].freeze
 
     public
 
+    # At this juncture the constructor just puts whatever you throw at
+    # it into the object. See
+    # {Store::Digest::Meta::LMDB#meta_get_stats} for the real magic.
+    # @param options [Hash]
     def initialize **options
       # XXX help i am so lazy
       options.each { |k, v| instance_variable_set "@#{k}", v }
     end
 
+    # Return the stats object as a nicely formatted string.
+    # @return [String] no joke.
     def to_s
+      # the deci-magnitude also happens to conveniently work as an array index
+      mag  = (Math.log(@bytes, 2) / 10).floor
+      size = if mag > 0
+               '%0.2f %s (%d bytes)' % [(@bytes.to_f / 2**(mag * 10)).round(2),
+                 MAGNITUDES[mag], @bytes]
+             else
+               "#{@bytes} bytes"
+             end
+
       out = <<-EOT
 #{self.class}
   Statistics:
@@ -167,7 +186,7 @@ class Store::Digest
     Last modified:   #{@mtime}
     Total objects:   #{@objects}
     Deleted records: #{@deleted}
-    Repository size: #{@bytes} bytes
+    Repository size: #{size}
       EOT
 
       %i[types languages charsets encodings].each do |k|

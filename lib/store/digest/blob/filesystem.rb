@@ -49,7 +49,7 @@ module Store::Digest::Blob::FileSystem
         raise "#{d} cannot be entered!" unless d.executable?
       else
         # wtf Pathname#mkdir takes no args
-        Dir.mkdir d, 0777 & ~umask
+        Dir.mkdir d, 0777 & ~umask | 02000
       end
     end
   end
@@ -92,7 +92,7 @@ module Store::Digest::Blob::FileSystem
     end
 
     # these can all raise, of course
-    FileUtils.mkpath(target.dirname, mode: 0777 & ~umask)
+    FileUtils.mkpath(target.dirname, mode: 0777 & ~umask | 02000)
 
     if !target.exist? || overwrite
       FileUtils.mv source, target

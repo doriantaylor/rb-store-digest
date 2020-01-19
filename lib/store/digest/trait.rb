@@ -24,7 +24,7 @@ module Store::Digest::Trait
         raise "#{dir} already exists and is not a directory" unless
           @dir.directory?
       else
-        FileUtils.mkpath @dir, mode: (0777 & ~@umask)
+        FileUtils.mkpath @dir, mode: (0777 & ~@umask | 02000)
       end
       raise "Specified directory #{@dir} must be writable" unless @dir.writable?
     end

@@ -84,8 +84,8 @@ User-manipulable metadata consists of:
 
 * Modification time (timestamp)
 * Content-type (MIME identifier, e.g. `text/html`)
-* Language ([RFC5646](https://tools.ietf.org/html/rfc5646) token,
-  user-supplied, e.g. `en-ca`)
+* Language (optional [RFC5646](https://tools.ietf.org/html/rfc5646)
+  token, e.g. `en-ca`)
 * Character set (optional token, e.g. `utf-8`, `iso-8859-1`, `windows-1252`)
 * Content-encoding (optional token, e.g. `gzip`, `deflate`)
 * Flags (8-bit unsigned integer)
@@ -102,7 +102,7 @@ For each of these flags, the values 0 to 3 signify:
 0. Unverified
 1. Invalid
 2. Recheck validation
-3. Verified
+3. Verified valid
 
 These metadata fields are "user-manipulable" for an _extremely_ loose
 definition of "user". The idea, in particular for the fields that have
@@ -110,7 +110,7 @@ associated flags, is that any initial value is a _claim_ that may be
 subsequently verified, by, for example, a separate maintenance daemon
 that scans newly-inserted objects and supplants their metadata with
 whatever it finds. For example, one could insert a compressed file of
-type `application/x-gzip`, and some other maintenance process could
+type `application/gzip`, and some other maintenance process could
 come along and realize that in fact the file is `image/svg+xml` with
 an _encoding_ of `gzip`, but there is also a syntax error, so it
 should not be served without first attempting to repair it. Because of
