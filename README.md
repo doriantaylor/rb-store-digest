@@ -18,7 +18,7 @@ another one? Well:
    another metadata source, _and nothing else_.
 5. **Organizational memory:** Retain a record, not only of every
    object _currently_ in the store, but also every object that has
-   _ever_ been in the store.
+   _ever been_ in the store.
 
 ## How to use Store::Digest
 

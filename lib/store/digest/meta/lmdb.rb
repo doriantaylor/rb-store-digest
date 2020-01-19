@@ -295,6 +295,9 @@ module Store::Digest::Meta::LMDB
         index_add k, newh[k], bin # will noop on nil
       end
 
+      # and finally update the mtime
+      @dbs[:control]['mtime'] = [now.to_i].pack ?N
+
       t.commit
 
       newh
@@ -333,6 +336,8 @@ module Store::Digest::Meta::LMDB
     @lmdb.transaction do |t|
       hash = get_meta(obj) or break
       bin  = hash[:digests][primary].digest
+      now  = Time.now
+
       RECORD.each { |k| index_rm k, hash[k], bin }
       hash[:digests].each { |algo, uri| @dbs[algo].delete uri.digest }
 
@@ -342,8 +347,11 @@ module Store::Digest::Meta::LMDB
         control_add :deleted, -1
       else
         control_add :bytes, -hash[:size]
-        hash[:dtime] = Time.now
+        hash[:dtime] = now
       end
+
+      # and finally update the mtime
+      @dbs[:control]['mtime'] = [now.to_i].pack ?N
 
       t.commit
 
@@ -352,7 +360,7 @@ module Store::Digest::Meta::LMDB
   end
 
   def mark_meta_deleted obj
-    @lmdb.transaction do
+    @lmdb.transaction do |t|
       # the object has to be in here to delete it
       oldh = get_meta(obj) or break
       # if the object is already "deleted" we do nothing
@@ -380,6 +388,11 @@ module Store::Digest::Meta::LMDB
         index_rm  k, oldh[k], bin if oldh and oldh[k] and oldh[k] != newh[k]
         index_add k, newh[k], bin # will noop on nil
       end
+
+      # and finally update the mtime
+      @dbs[:control]['mtime'] = [now.to_i].pack ?N
+
+      t.commit
 
       newh
     end
