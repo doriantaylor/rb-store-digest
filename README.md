@@ -150,6 +150,19 @@ and transforming the first few bits into a hashed directory structure
 blob and metadata subsystems are decoupled, such that the two can be
 mixed and matched.
 
+### Basic Architecture
+
+`Store::Digest` proper is a unified interface over a `Driver` which
+provides the concrete implementation. A driver may be further
+decoupled (as is the case with `LMDB`) into `Blob` and `Meta`
+subcomponents, which themselves may share `Trait`s (like storing its
+state in a `RootDir`). We can imagine this bifurcation not being
+universal, e.g. a prospective PostgreSQL driver could handle both
+blobs _and_ metadata within its own confines.
+
+> I have yet to decide on the final layout of this system, so don't
+> get too used to it.
+
 ### A note on storage efficiency
 
 Unlike Git, which uses `pigz` (or rather, `deflate`) to compress its

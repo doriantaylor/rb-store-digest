@@ -192,7 +192,7 @@ class Store::Digest
       %i[types languages charsets encodings].each do |k|
         stats = instance_variable_get("@#{k}")
         if stats and !stats.empty?
-          out << "  #{LABELS.fetch k, k.capitalize}:\n"
+          out << "  #{LABELS.fetch k, k.capitalize}: #{stats.count}\n"
           stats.keys.sort.each do |s|
             out << "    #{s}: #{stats[s]}\n"
           end
