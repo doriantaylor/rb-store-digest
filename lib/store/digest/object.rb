@@ -45,15 +45,27 @@ class Store::Digest::Object
   SAMPLE    = 2**13 # must be big enough to detect ooxml
   BLOCKSIZE = 2**16
 
+  CHARSETS = [
+    %w[utf8 utf-8],
+    %w[iso8859-1 iso-8859-1],
+  ].map { |k, v| [k.freeze, v.freeze] }.to_h.freeze
+
+  ENCODINGS = [
+    %w[x-compress compress],
+    %w[x-gzip gzip],
+  ].map { |k, v| [k.freeze, v.freeze] }.to_h.freeze
+
   TOKEN = '[^\x0-\x20()<>@,;:\\\"/\[\]?=\x7f-\\xff]+'
 
   # { key: [pattern, normalizer] } - assumes stripped and downcased
   TOKENS = {
-    type:     [/^(#{TOKEN}(?:\/#{TOKEN})?)$/on, -> c { c }],
-    charset:  [/^(#{TOKEN})$/on, -> c { c } ],
+    type:     [/^(#{TOKEN}(?:\/#{TOKEN})?)$/on, -> c { c.downcase }],
+    charset:  [/^(#{TOKEN})$/on,
+      -> c { c = c.tr(?_, ?-).downcase; CHARSETS.fetch c, c } ],
     encoding: [/^(#{TOKEN})$/on,
-      -> c { m = /^x-(compress|gzip)$/.match(c); m ? m[1] : c } ],
-    language: [/^([a-z]{2,3}(?:[-_][0-9a-z]+)*)$/, -> c { c.tr(?_, ?-) }],
+      -> c { c = c.tr(?_, ?-).downcase; ENCODINGS.fetch c, c } ],
+    language: [/^([a-z]{2,3}(?:[-_][0-9a-z]+)*)$/,
+      -> c { c.downcase.tr(?_, ?-).gsub(/-*$/, '') } ],
   }
 
   # flag constants
@@ -101,16 +113,17 @@ class Store::Digest::Object
   def coerce_token t, k
     t = t.to_s.strip.downcase
     pat, norm = TOKENS[k]
-    raise "#{k} does not match #{pat}" unless m = pat.match(t)
+    raise "#{k} #{t} does not match #{pat}" unless m = pat.match(t)
     norm.call m[1]
   end
 
   public
-    
+
   #
   def initialize content = nil, digests: {}, size: 0,
       type: 'application/octet-stream', charset: nil, language: nil,
-      encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil, flags: 0
+      encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil, flags: 0,
+      strict: true
 
     # check input on content
     @content = case content
@@ -181,7 +194,12 @@ class Store::Digest::Object
     # the following can be strings or symbols:
     TOKENS.keys.each do |k|
       if x = b.local_variable_get(k)
-        instance_variable_set "@#{k}", coerce_token(x, k).freeze
+        x = if strict
+              coerce_token(x, k)
+            else
+              coerce_token(x, k) rescue nil
+            end
+        instance_variable_set "@#{k}", x.freeze if x
       end
     end
   end
@@ -193,14 +211,16 @@ class Store::Digest::Object
 
   #
   def self.scan content, digests: URI::NI.algorithms, mtime: nil,
-      type: nil, language: nil, charset: nil, encoding: nil, &block
+      type: nil, language: nil, charset: nil, encoding: nil,
+      blocksize: BLOCKSIZE, strict: true, &block
     self.new.scan content, digests: digests, mtime: mtime, type: type,
-      language: language, charset: charset, encoding: encoding, &block
+      language: language, charset: charset, encoding: encoding,
+      blocksize: blocksize, strict: strict, &block
   end
 
   def scan content = nil, digests: URI::NI.algorithms, mtime: nil,
       type: nil, charset: nil, language: nil, encoding: nil,
-      blocksize: BLOCKSIZE, &block
+      blocksize: BLOCKSIZE, strict: true, &block
     # we put all the scanning stuff in here
     content = case content
               when nil          then self.content
@@ -217,14 +237,19 @@ class Store::Digest::Object
     content.binmode if content.respond_to? :binmode
 
     # sane default for mtime
-    mtime ||= content.respond_to?(:mtime) ? content.mtime : Time.now
-    @mtime = mtime = coerce_time mtime, :mtime
+    @mtime = coerce_time(mtime || @mtime ||
+      (content.respond_to?(:mtime) ? content.mtime : Time.now), :mtime)
 
     # eh, *some* code reuse
     b = binding
     TOKENS.keys.each do |k|
       if x = b.local_variable_get(k)
-        instance_variable_set "@#{k}", coerce_token(x, k).freeze
+        x = if strict
+              coerce_token(x, k)
+            else
+              coerce_token(x, k) rescue nil
+            end
+        instance_variable_set "@#{k}", x.freeze if x
       end
     end
 
@@ -354,6 +379,22 @@ class Store::Digest::Object
   # @return [false, true]
   def syntax_valid?
     0 != @flags & (SYNTAX_CHECKED|SYNTAX_VALID)
+  end
+
+  %i[ctime mtime ptime dtime].each do |k|
+    define_method "#{k}=" do |v|
+      instance_variable_set "@#{k}", coerce_time(v, k).freeze
+    end
+  end
+
+  %i[type charset encoding language].each do |k|
+    define_method "#{k}=" do |v|
+      instance_variable_set "@#{k}", coerce_token(v, k).freeze
+    end
+
+    define_method "#{k}_ok?" do |v|
+      TOKENS[k].first.match? v
+    end
   end
 
   # Return the object as a hash. Omits the content by default.

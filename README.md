@@ -120,8 +120,8 @@ a desirable and likely future addition to it.
 
 ## API Documentation
 
-Generated and deposited
-[in the usual place](http://www.rubydoc.info/github/doriantaylor/rb-store-digest/master).
+Generated and deposited [in the usual
+place](https://www.rubydoc.info/github/doriantaylor/rb-store-digest/master).
 
 ## Design
 

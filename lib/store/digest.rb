@@ -5,23 +5,38 @@ require 'store/digest/object'
 class Store::Digest
   private
 
-  def coerce_object obj
-    case obj
-    when Store::Digest::Object
-      obj
-    when URI::NI
-      # just return the uri
-      Store::Digest::Object.new digests: obj
-    when IO, String, StringIO
-      # assume this is going to be scanned later
-      Store::Digest::Object.new obj
-    when Pathname
-      # actually open pathnames that are handed directly into S::D
-      Store::Digest::Object.new obj.expand_path.open('rb')
-    else
-      raise ArgumentError,
-        "Can't coerce a #{obj.class} to Store::Digest::Object"
+  def coerce_object obj, type: nil, charset: nil,
+      language: nil, encoding: nil, mtime: nil, strict: true
+    obj = case obj
+          when Store::Digest::Object
+            obj.dup
+          when URI::NI
+            # just return the uri
+            Store::Digest::Object.new digests: obj
+          when IO, String, StringIO
+            # assume this is going to be scanned later
+            Store::Digest::Object.new obj
+          when Pathname
+            # actually open pathnames that are handed directly into S::D
+            Store::Digest::Object.new obj.expand_path.open('rb')
+          else
+            raise ArgumentError,
+              "Can't coerce a #{obj.class} to Store::Digest::Object"
+          end
+
+    # overwrite the user-mutable metadata
+    b = binding
+    %i[type charset language encoding mtime].each do |field|
+      begin
+        if x = b.local_variable_get(field)
+          obj.send "#{field}=", x
+        end
+      rescue RuntimeError => e
+        raise e if strict
+      end
     end
+
+    obj
   end
 
   public
@@ -61,15 +76,24 @@ class Store::Digest
   # @note Prefabricated {Store::Digest::Object} instances will be rescanned.
   # @param obj [IO,File,Pathname,String,Store::Digest::Object] the object
   # @return [Store::Digest::Object] The (potentially pre-existing) entry
-  def add obj
+  def add obj, type: nil, charset: nil, language: nil, encoding: nil,
+      mtime: nil, strict: true
+    return unless obj
     transaction do
-      obj = coerce_object obj
+      obj = coerce_object obj, type: type, charset: charset,
+        language: language, encoding: encoding, mtime: mtime, strict: strict
       raise ArgumentError, 'We need something to store!' unless obj.content?
 
       tmp = temp_blob
 
+      # XXX this is stupid; figure out a better way to do this
+
       # get our digests
-      obj.scan(digests: algorithms, blocksize: 2**20) { |buf| tmp << buf }
+      obj.scan(digests: algorithms, blocksize: 2**20, strict: strict,
+        type: type, charset: charset, language: language,
+        encoding: encoding, mtime: mtime) do |buf|
+        tmp << buf
+      end
       obj.dtime = nil
       if h = set_meta(obj)
         # replace the object
@@ -171,7 +195,7 @@ class Store::Digest
     # @return [String] no joke.
     def to_s
       # the deci-magnitude also happens to conveniently work as an array index
-      mag  = (Math.log(@bytes, 2) / 10).floor
+      mag  = @bytes == 0 ? 0 : (Math.log(@bytes, 2) / 10).floor
       size = if mag > 0
                '%0.2f %s (%d bytes)' % [(@bytes.to_f / 2**(mag * 10)).round(2),
                  MAGNITUDES[mag], @bytes]

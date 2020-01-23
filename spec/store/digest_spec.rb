@@ -63,9 +63,9 @@ RSpec.describe Store::Digest do
 
   # (Note: It may seem weird to `get` an object you already have, but
   # the return value is an implicit verification that the store *also*
-  # has it. It is like this mainly for symmetry)
+  # has it. It is like this mainly for symmetry.)
   
-  # store should remove a String/IO/File/Pathname/Store::Digest::Object/URI::NI
+  # store should remove a URI::NI/Store::Digest::Object/String/IO/File/Pathname
   # store.remove returns the removed object
   # store.remove should set the object's dtime
   # store.remove should nuke the blob *
