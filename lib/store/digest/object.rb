@@ -397,6 +397,14 @@ class Store::Digest::Object
     end
   end
 
+  # Just a plain old predicate to determine whether the blob has been
+  # deleted from the store (but implicitly the metadata record
+  # remains).
+  # @return [false, true]
+  def deleted?
+    !!@dtime
+  end
+
   # Return the object as a hash. Omits the content by default.
   # @param content [false, true] include the content if true
   # @return [Hash] the object as a hash

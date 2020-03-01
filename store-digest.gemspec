@@ -27,12 +27,12 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '~> 2.0'
 
   # dev/test dependencies
-  spec.add_development_dependency 'bundler', '~> 1.17'
-  spec.add_development_dependency 'rake',    '~> 10.0'
-  spec.add_development_dependency 'rspec',   '~> 3.0'
+  spec.add_development_dependency 'bundler', '~> 2.1'
+  spec.add_development_dependency 'rake',    '~> 13.0'
+  spec.add_development_dependency 'rspec',   '~> 3.9'
 
   # stuff we use
   spec.add_runtime_dependency 'base32',    '>= 0.3.2'
-  spec.add_runtime_dependency 'lmdb',      '>= 0.5.0' # my hacks
+  spec.add_runtime_dependency 'lmdb',      '>= 0.5.2' # my hacks
   spec.add_runtime_dependency 'mimemagic', '>= 0.3.3'
 end
