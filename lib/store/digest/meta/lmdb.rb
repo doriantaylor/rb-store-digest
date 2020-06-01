@@ -2,6 +2,7 @@ require 'store/digest/meta'
 require 'store/digest/trait'
 
 require 'lmdb'
+require 'uri/ni'
 
 module Store::Digest::Meta::LMDB
   include Store::Digest::Meta
@@ -125,7 +126,7 @@ module Store::Digest::Meta::LMDB
   end
 
   # return an enumerator 
-  def index_get index, min, max = nil, &block
+  def index_get index, min, max = nil, range: false, &block
     # min and max will be binary values and the cursor will return a range
     min = index_pack(min)
     max = index_pack(max)
@@ -133,16 +134,18 @@ module Store::Digest::Meta::LMDB
 
     return enum_for :index_get, index, min, max unless block_given?
 
-    @dbs[index.to_sym].cursor do |c|
+    body = -> c do
       # lmdb cursors are a pain in the ass because 'set' advances the
       # cursor so you can't just run the whole thing in a loop, you
       # have to do this instead:
-      if rec = min ? c.set_range(min) : c.first
-        break unless max or min == rec.first
+      if rec = (min ? c.set_range(min) : c.first)
+        return unless range or max or min == rec.first
         block.call(*rec)
         block.call(*rec) while rec = c.next_range(max || min)
       end
     end
+
+    @dbs[index.to_sym].cursor(&body)
     nil
   end
 
@@ -220,7 +223,8 @@ module Store::Digest::Meta::LMDB
     raise ArgumentError,
       'Object does not have a complete set of digests' unless
       (algorithms - obj.algorithms).empty?
-    @lmdb.transaction do |t|
+
+    body = -> do
       # noop if object is present and not deleted and no details have changed
       bin  = obj[primary].digest
       newh = obj.to_h
@@ -249,7 +253,7 @@ module Store::Digest::Meta::LMDB
       newrec = deflate newh
 
       # we have to *break* out of blocks, not return!
-      break if newrec == oldrec
+      return if newrec == oldrec
 
       # these only need to be done if they haven't been done before
       (algorithms - [primary]).each do |algo|
@@ -298,14 +302,16 @@ module Store::Digest::Meta::LMDB
       # and finally update the mtime
       @dbs[:control]['mtime'] = [now.to_i].pack ?N
 
-      t.commit
-
       newh
+    end
+
+    @lmdb.transaction do
+      body.call
     end
   end
 
   def get_meta obj
-    @lmdb.transaction do
+    body = -> do
       # find/inflate master record
       algo = if obj[primary]
                primary
@@ -321,20 +327,24 @@ module Store::Digest::Meta::LMDB
 
       # look up the primary digest based on a secondary
       unless algo == primary
-        bin = @dbs[algo][bin] or break
+        bin = @dbs[algo][bin] or return
       end
 
       # actually raise maybe? because this should never happen
-      rec = @dbs[primary][bin] or break
+      rec = @dbs[primary][bin] or return
 
       # return just a hash of all the elements
       inflate bin, rec
     end
+
+    @lmdb.transaction do
+      body.call
+    end
   end
 
   def remove_meta obj
-    @lmdb.transaction do |t|
-      hash = get_meta(obj) or break
+    body = -> do
+      hash = get_meta(obj) or return
       bin  = hash[:digests][primary].digest
       now  = Time.now
 
@@ -353,18 +363,20 @@ module Store::Digest::Meta::LMDB
       # and finally update the mtime
       @dbs[:control]['mtime'] = [now.to_i].pack ?N
 
-      t.commit
-
       hash
+    end
+
+    @lmdb.transaction do
+      body.call
     end
   end
 
   def mark_meta_deleted obj
-    @lmdb.transaction do |t|
+    body = -> do
       # the object has to be in here to delete it
-      oldh = get_meta(obj) or break
+      oldh = get_meta(obj) or return
       # if the object is already "deleted" we do nothing
-      break if oldh[:dtime]
+      return if oldh[:dtime]
 
       bin = oldh[:digests][primary].digest
       now = Time.now
@@ -392,9 +404,11 @@ module Store::Digest::Meta::LMDB
       # and finally update the mtime
       @dbs[:control]['mtime'] = [now.to_i].pack ?N
 
-      t.commit
-
       newh
+    end
+
+    @lmdb.transaction do
+      body.call
     end
   end
 
@@ -423,15 +437,19 @@ module Store::Digest::Meta::LMDB
   public
 
   def transaction &block
-    @lmdb.transaction(&block)
+    @lmdb.transaction do
+      block.call
+    end
   end
 
   # Return the set of algorithms initialized in the database.
   # @return [Array] the algorithms
   def algorithms
+    
     @algorithms ||= @lmdb.transaction do
-      ret = @dbs[:control]['algorithms'] or return
-      ret.strip.split(/\s*,+\s*/).map(&:to_sym)
+      if ret = @dbs[:control]['algorithms']
+        ret.strip.split(/\s*,+\s*/).map(&:to_sym)
+      end
     end
   end
 
@@ -439,8 +457,9 @@ module Store::Digest::Meta::LMDB
   # @return [Symbol] the primary algorithm
   def primary
     @primary ||= @lmdb.transaction do
-      ret = @dbs[:control]['primary'] or return
-      ret.strip.to_sym
+      if ret = @dbs[:control]['primary']
+        ret.strip.to_sym
+      end
     end
   end
 
@@ -448,8 +467,9 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def objects
     @lmdb.transaction do
-      ret = @dbs[:control]['objects'] or return
-      ret.unpack1 'Q>' # 64-bit unsigned network-endian integer
+      if ret = @dbs[:control]['objects']
+        ret.unpack1 'Q>' # 64-bit unsigned network-endian integer
+      end
     end
   end
 
@@ -458,8 +478,9 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def deleted
     @lmdb.transaction do
-      ret = @dbs[:control]['deleted'] or return
-      ret.unpack1 'Q>'
+      if ret = @dbs[:control]['deleted']
+        ret.unpack1 'Q>'
+      end
     end
   end
 
@@ -468,8 +489,117 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def bytes
     @lmdb.transaction do
-      ret = @dbs[:control]['bytes'] or return
-      ret.unpack1 'Q>'
+      if ret = @dbs[:control]['bytes']
+        ret.unpack1 'Q>'
+      end
     end
   end
+
+  # Return a list of objects matching the given criteria. The result
+  # set will be the intersection of all supplied parameters. `:type`,
+  # `:charset`, `:encoding`, and `:language` are treated like discrete
+  # sets, while the rest of the parameters are treated like ranges
+  # (two-element arrays). Single values will be coerced into arrays;
+  # single range values will be interpreted as an inclusive lower
+  # bound. To bound only at the top, use a two-element array with its
+  # first value `nil`, like so: `size: [nil, 31337]`. The sorting
+  # criteria are the symbols of the other parameters.
+  #
+  # @param type [nil, String, #to_a]
+  # @param charset [nil, String, #to_a]
+  # @param encoding [nil, String, #to_a]
+  # @param language [nil, String, #to_a]
+  # @param size [nil, Integer, #to_a] byte size range
+  # @param ctime [nil, Time, DateTime, #to_a] creation time range
+  # @param mtime [nil, Time, DateTime, #to_a] modification time range
+  # @param ptime [nil, Time, DateTime, #to_a] medatata property change range
+  # @param dtime [nil, Time, DateTime, #to_a] deletion time range
+  # @param sort [nil, Symbol, #to_a] sorting criteria
+  # @return [Array] the list
+
+  PARAMS = %i[type charset encoding language
+    size ctime mtime ptime dtime].freeze
+
+  def list type: nil, charset: nil, encoding: nil, language: nil,
+      size: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil, sort: nil
+    # coerce all the inputs
+    params = begin
+               b  = binding
+               ph = {}
+               PARAMS.each do |key|
+                 val = b.local_variable_get key
+                 val = case val
+                       when nil then []
+                       when Time then [val]
+                       when DateTime then [val.to_time]
+                       when -> (v) { v.respond_to? :to_a } then val.to_a
+                       else [val]
+                       end
+                 ph[key] = val unless val.empty?
+               end
+               ph
+             end
+    # find the smallest denominator
+    index = params.keys.map do |k|
+      [k, @dbs[k].size]
+    end.sort { |a, b| a[1] <=> b[1] }.map(&:first).first
+    out = {}
+    @lmdb.transaction do
+      if index
+        warn params.inspect
+        if INTS[index]
+          index_get index, *params[index], range: true do |_, v|
+            u = URI("ni:///#{primary};")
+            u.digest = v
+            out[u] ||= get u
+          end
+        else
+          params[index].each do |val|
+            index_get index, val do |_, v|
+              u = URI("ni:///#{primary};")
+              u.digest = v
+              out[u] ||= get u
+            end
+          end
+        end
+        rest = params.keys - [index]
+        unless rest.empty?
+          out.select! do |_, obj|
+            rest.map do |param|
+              if val = obj.send(param)
+                warn "#{param} #{params[param]} <=> #{val}"
+                if INTS[param]
+                  min, max = params[param]
+                  if min && max
+                    val >= min && val <= max
+                  elsif min
+                    val >= min
+                  elsif max
+                    val <= max
+                  end
+                else
+                  params[param].include? val
+                end
+              else
+                false
+              end
+            end.all?(true)
+          end
+        end
+      else
+        # if we aren't filtering at all we can just obtain everything
+        @dbs[primary].cursor do |c|
+          while rec = c.next
+            u = URI("ni:///#{primary};")
+            u.digest = rec.first
+            out[u] ||= get u
+          end
+        end
+      end
+    end
+
+    # now we sort
+    out.values
+  end
+
 end

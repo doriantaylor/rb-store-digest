@@ -105,4 +105,17 @@ RSpec.describe Store::Digest do
 
   # search parameters should be ANDed between dimensions and ORed
   # between values
+
+  # store should work with threads
+  subject do
+    Store::Digest.new dir: '/tmp/test-store-digest', mapsize: 2**27
+  end
+
+  it 'should work with threads' do
+    require 'thread'
+    t = Thread.new do
+      subject.add 'lolz'
+    end
+    t.join
+  end
 end

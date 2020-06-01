@@ -326,6 +326,14 @@ class Store::Digest::Object
     !!@content
   end
 
+  # Returns the type and charset, suitable for an HTTP header.
+  # @return [String]
+  def type_charset
+    out = type.to_s
+    out += ";charset=#{charset}" if charset
+    out
+  end
+
   # Determines if the object has been scanned.
   # @return [false, true]
   def scanned?

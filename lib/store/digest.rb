@@ -1,4 +1,4 @@
-require "store/digest/version"
+require 'store/digest/version'
 require 'store/digest/driver'
 require 'store/digest/object'
 
@@ -79,7 +79,7 @@ class Store::Digest
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
       mtime: nil, strict: true
     return unless obj
-    transaction do
+    #transaction do # |txn|
       obj = coerce_object obj, type: type, charset: charset,
         language: language, encoding: encoding, mtime: mtime, strict: strict
       raise ArgumentError, 'We need something to store!' unless obj.content?
@@ -98,6 +98,7 @@ class Store::Digest
       if h = set_meta(obj)
         # replace the object
 
+
         content = obj.content
 
         # do this to prevent too many open files
@@ -110,27 +111,32 @@ class Store::Digest
 
         # now settle the blob into storage
         settle_blob obj[primary].digest, tmp, mtime: obj.mtime
+        #txn.commit
       else
         tmp.close
         tmp.unlink
 
         # eh just do this
         obj = get obj
+
+        # abort after because get will be a subtxn
+        # txn.abort
       end
 
       obj
-    end
+    #end
   end
 
   # Retrieve an object from the store.
   # @param 
   def get obj
-    transaction do
+    body = -> do
       obj = coerce_object obj
-      h = get_meta(obj) or break # bail if this does not exist
+      h = get_meta(obj) or return # bail if this does not exist
       b = get_blob h[:digests][primary].digest # may be nil
       Store::Digest::Object.new b, **h
     end
+    transaction(&body)
   end
 
   # Remove an object from the store, optionally "forgetting" it ever existed.
@@ -182,6 +188,8 @@ class Store::Digest
 
     public
 
+    attr_reader :ctime, :mtime, :objects, :deleted, :bytes
+
     # At this juncture the constructor just puts whatever you throw at
     # it into the object. See
     # {Store::Digest::Meta::LMDB#meta_get_stats} for the real magic.
@@ -191,17 +199,39 @@ class Store::Digest
       options.each { |k, v| instance_variable_set "@#{k}", v }
     end
 
+    # Return a human-readable byte size.
+    # @return [String] a representation of the byte size of the store.
+    def human_size
+      # the deci-magnitude also happens to conveniently work as an array index
+      mag  = @bytes == 0 ? 0 : (Math.log(@bytes, 2) / 10).floor
+      if mag > 0
+        '%0.2f %s (%d bytes)' % [(@bytes.to_f / 2**(mag * 10)).round(2),
+          MAGNITUDES[mag], @bytes]
+      else
+        "#{@bytes} bytes"
+      end
+    end
+
+    def label_struct
+      out = {}
+      %i[types languages charsets encodings].each do |k|
+        stats = instance_variable_get("@#{k}")
+        if stats and !stats.empty?
+          # XXX note that all these plurals are just inflected with
+          # 's' so clipping off the last character is correct
+          ks = k.to_s[0, k.to_s.length - 1].to_sym
+          x = out[ks] ||= [LABELS.fetch(k, k.capitalize), {}]
+          stats.keys.sort.each do |s|
+            x.last[s] = stats[s]
+          end
+        end
+      end
+      out
+    end
+
     # Return the stats object as a nicely formatted string.
     # @return [String] no joke.
     def to_s
-      # the deci-magnitude also happens to conveniently work as an array index
-      mag  = @bytes == 0 ? 0 : (Math.log(@bytes, 2) / 10).floor
-      size = if mag > 0
-               '%0.2f %s (%d bytes)' % [(@bytes.to_f / 2**(mag * 10)).round(2),
-                 MAGNITUDES[mag], @bytes]
-             else
-               "#{@bytes} bytes"
-             end
 
       out = <<-EOT
 #{self.class}
@@ -210,7 +240,7 @@ class Store::Digest
     Last modified:   #{@mtime}
     Total objects:   #{@objects}
     Deleted records: #{@deleted}
-    Repository size: #{size}
+    Repository size: #{human_size}
       EOT
 
       %i[types languages charsets encodings].each do |k|
