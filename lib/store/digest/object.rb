@@ -131,6 +131,8 @@ class Store::Digest::Object
                when IO, StringIO, Proc then content
                when String then StringIO.new content
                when Pathname then -> { content.expand_path.open('rb') }
+               when -> x { %i[read seek pos].all? { |m| x.respond_to? m } }
+                 content
                else
                  raise ArgumentError,
                    "Cannot accept content given as #{content.class}"

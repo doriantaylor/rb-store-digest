@@ -12,13 +12,20 @@ class Store::Digest
             obj.dup
           when URI::NI
             # just return the uri
-            Store::Digest::Object.new digests: obj
-          when IO, String, StringIO
+            Store::Digest::Object.new digests: obj,
+              type: type, charset: charset, language: language,
+              encoding: encoding, mtime: mtime
+          when IO, String, StringIO,
+              -> x { %i[seek pos read].all? { |m| x.respond_to? m } }
             # assume this is going to be scanned later
-            Store::Digest::Object.new obj
+            Store::Digest::Object.new obj,
+              type: type, charset: charset, language: language,
+              encoding: encoding, mtime: mtime
           when Pathname
             # actually open pathnames that are handed directly into S::D
-            Store::Digest::Object.new obj.expand_path.open('rb')
+            Store::Digest::Object.new obj.expand_path.open('rb'),
+              type: type, charset: charset, language: language,
+              encoding: encoding, mtime: mtime
           else
             raise ArgumentError,
               "Can't coerce a #{obj.class} to Store::Digest::Object"
