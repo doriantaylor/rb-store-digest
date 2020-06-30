@@ -250,7 +250,7 @@ module Store::Digest::Meta::LMDB
                    case k
                    when :ctime then ov # never overwrite ctime
                    when :mtime # only overwrite the mtime if specified
-                     preserve ? (nv || ov || now) : (ov || nv || now)
+                     preserve ? (ov || nv || now) : (nv || ov || now)
                    when :ptime then nv || ov || now # XXX derive ptime?
                    when :dtime
                      # net change is zero if both or neither are set

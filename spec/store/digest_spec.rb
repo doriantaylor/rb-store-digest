@@ -1,41 +1,61 @@
 RSpec.describe Store::Digest do
+  before :context do
+    @store = Store::Digest.new dir: '/tmp/test-store-digest', mapsize: 2**27
+  end
+
+  subject { @store }
+
+  after :context do
+    @store = nil
+    FileUtils.rm_rf '/tmp/test-store-digest'
+  end
+
   it "has a version number" do
     expect(Store::Digest::VERSION).not_to be nil
   end
 
-  # can't really test this thing other than as a system, but here goes
-
-  # actually no that's not true, we can test the objects in isolation:
-
-  context 'creating objects' do
-  # object initializes blank
-  # object defaults to application/octet-stream
-  # object defaults to size 0
-  # object can scan a String
-  # object can scan a File
-  # object can scan a Pathname
-  # object can scan an IO
-  # object can scan a Proc (that returns an IO)
-  # object complains if the coerced IO can't seek/tell (ie no pipes/sockets)
-  # object correctly sets blob size from scan
-  # object correctly gleans mtime from content (if file)
-  # object correctly gleans content-type from path if input is a file
-  # object otherwise obtains content-type by sampling input
-  # object complains if specified digests are not in the inventory
-  # object digests of course match the content
-  # user should not be able to modify content or digests after a scan
-  # user should not be able to overwrite size, ctime, ptime, or dtime
-  # user should not be able to set type/charset/language/encoding to garbage
-  # input for mtime/type/charset/language/encoding should be normalized
+  # store should work with threads
+  it 'should work with threads' do
+    require 'thread'
+    t = Thread.new do
+      subject.add 'lolz'
+    end
+    t.join
   end
 
   # anyway, i will mark driver-specific tests with an asterisk *
 
   context 'initializing the store' do
-  # store should initialize
-  # store should select the lmdb driver by default
-  # store should accept the module or resolve the symbol to the module
-  # store should complain if you give it a bad driver
+    # store should initialize
+    it 'should initialize' do 
+      expect(subject).to be_a Store::Digest
+    end
+
+    it 'should select the lmdb driver by default' do
+      # store should select the lmdb driver by default
+      expect(subject).to be_a Store::Digest::Driver::LMDB
+    end
+
+    it 'should accept the module or resolve the symbol to the module' do
+      # store should accept the module or resolve the symbol to the module
+      expect do
+        Store::Digest.new driver: :LMDB, dir: '/tmp/test-store-digest'
+      end.to_not raise_error
+    end
+
+    it 'should complain if you give it a bad driver' do
+      # store should complain if you give it a bad driver
+      expect do
+        Store::Digest.new driver: :Derp, dir: '/tmp/test-store-digest'
+      end.to raise_error(ArgumentError)
+    end
+
+    # store should set a creation time once and never touch it again
+    # store should set a modification time that starts out the same as ctime
+    # store should initialize with objects/deleted/byte counts all zero
+  end
+
+  context 'poke at Driver::LMDB' do
   # store should complain if you don't tell it where to set up shop *
   # store should create its root directory if it doesn't exist *
   # store should complain if creating a directory fails *
@@ -44,33 +64,55 @@ RSpec.describe Store::Digest do
   # store should setgid its directories if the OS supports it *
   # store should chown its contents to make sure it can be accessed *
   # store should initialize metadata database, whatever that entails *
-  # store should set a creation time once and never touch it again
-  # store should set a modification time that starts out the same as ctime
-  # store should initialize with objects/deleted/byte counts all zero
   end
 
-  context 'storing objects' do
-  # store should add a String/IO/File/Pathname/Store::Digest::Object
-  # store should complain if IO is not seekable
-  # store should complain if S:D:O is not in order
-  # store should complain if obj.size does not match content size
-  # store.add should increment the store's byte and object counts
-  # store.add should ignore any supplied ctime/ptime/dtime
-  # store.add should return a retrieved object (with content as a proc)
-  # store.add should no-op the same entry added a second time
-  # store.add should nevertheless update metadata if different from existing
 
-  # store.add should set obj.fresh? to true if the object was not
-  #   previously present in the store
-  # store.add should set obj.fresh? to true if the object had been
-  #   previously deleted
-  # store.add should set obj.fresh? to true if any metadata has been
-  #   updated
-  # store.add should set obj.fresh? to false if the object was already
-  #   present
-  # store.add should set obj.fresh? to false if preserve: true and the
-  #   only difference in the new object is its mtime
-  # (store.add should set obj.fresh? to true otherwise)
+  context 'storing objects' do
+    # store should add a String/IO/File/Pathname/Store::Digest::Object
+    # store should complain if IO is not seekable
+    # store should complain if S:D:O is not in order
+    # store should complain if obj.size does not match content size
+    # store.add should increment the store's byte and object counts
+    # store.add should ignore any supplied ctime/ptime/dtime
+    # store.add should return a retrieved object (with content as a proc)
+    # store.add should no-op the same entry added a second time
+    # store.add should nevertheless update metadata if different from existing
+
+    it 'should set obj.fresh? to true for a new object' do
+      # store.add should set obj.fresh? to true if the object was not
+      #   previously present in the store
+      obj = subject.add 'hurrdurr'
+      expect(obj.fresh?).to be true
+    end
+
+    it 'should set obj.fresh? to true for a previously-deleted object' do
+      # store.add should set obj.fresh? to true if the object had been
+      #   previously deleted
+      obj  = subject.add 'lol'
+      dead = subject.remove 'lol'
+      obj  = subject.add 'lol'
+      expect(obj.fresh?).to be true
+    end
+
+    it 'should set obj.fresh? to true on a substantive metadata change' do
+      # store.add should set obj.fresh? to true if any metadata has been
+      #   updated
+    end
+
+    it 'should set obj.fresh? to false for an existing object' do
+      # store.add should set obj.fresh? to false if the object was already
+      #   present
+      obj = subject.add 'lol'
+      expect(obj.fresh?).to be false
+    end
+
+    it 'should set obj.fresh? to false on preserve: true' do
+      # store.add should set obj.fresh? to false if preserve: true and the
+      #   only difference in the new object is its mtime
+      # (store.add should set obj.fresh? to true otherwise)
+      obj = subject.add 'lol', mtime: Time.now + 10, preserve: true
+      expect(obj.fresh?).to be false
+    end
   end
 
   context 'retrieving objects' do
@@ -129,18 +171,5 @@ RSpec.describe Store::Digest do
 
   # search parameters should be ANDed between dimensions and ORed
   # between values
-
-  # store should work with threads
-  subject do
-    Store::Digest.new dir: '/tmp/test-store-digest', mapsize: 2**27
-  end
-
-  it 'should work with threads' do
-    require 'thread'
-    t = Thread.new do
-      subject.add 'lolz'
-    end
-    t.join
-  end
 
 end
