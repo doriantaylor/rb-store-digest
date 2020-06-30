@@ -218,8 +218,19 @@ module Store::Digest::Meta::LMDB
     @lmdb.sync
   end
 
-  # returns a metadata hash or nil if no changes have been made
-  def set_meta obj
+  # Returns a metadata hash or `nil` if no changes have been made. A
+  # common scenario is that the caller will attempt to store an object
+  # that is already present, with the only distinction being `:ctime`
+  # (which is always ignored) and/or `:mtime`. Setting the `:preserve`
+  # keyword parameter to a true value will cause any new value for
+  # `:mtime` to be ignored as well. In that case, an attempt to store
+  # an otherwise identical record overtop of an existing one will
+  # return `nil`.
+  #
+  # @param obj [Store::Digest::Object] the object to store
+  # @param preserve [false, true] whether to preserve the mtime
+  # @return [nil, Hash] maybe the metadata content of the object 
+  def set_meta obj, preserve: false
     raise ArgumentError,
       'Object does not have a complete set of digests' unless
       (algorithms - obj.algorithms).empty?
@@ -237,8 +248,10 @@ module Store::Digest::Meta::LMDB
                  oldh = inflate bin, oldrec
                  oldh.merge(newh) do |k, ov, nv|
                    case k
-                   when :ctime then ov
-                   when :mtime, :ptime then nv || ov || now
+                   when :ctime then ov # never overwrite ctime
+                   when :mtime # only overwrite the mtime if specified
+                     preserve ? (nv || ov || now) : (ov || nv || now)
+                   when :ptime then nv || ov || now # XXX derive ptime?
                    when :dtime
                      # net change is zero if both or neither are set
                      change = 0 if (nv && ov) || (!nv && !ov)
@@ -253,7 +266,10 @@ module Store::Digest::Meta::LMDB
       newrec = deflate newh
 
       # we have to *break* out of blocks, not return!
+      # (ah but we can return from a lambda)
       return if newrec == oldrec
+      # anyway a common scenario is a write where nothing is different
+      # but the mtime, so thepurpose
 
       # these only need to be done if they haven't been done before
       (algorithms - [primary]).each do |algo|

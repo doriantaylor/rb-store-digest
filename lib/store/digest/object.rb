@@ -7,6 +7,17 @@ require 'mimemagic/overlay'
 
 class MimeMagic
   # XXX erase this when these methods get added
+  unless self.method_defined? :parents
+    def self.parents type
+      TYPES.fetch(type, [nil,[]])[1].map { |t| new t }.uniq
+    end
+  end
+
+  unless self.method_defined? :ancestor_types
+    def self.ancestor_types type
+      parents(type).map { |t| ancestors(t) }.flatten.uniq
+    end
+  end
 
   unless self.method_defined? :binary?
     def self.binary? thing
@@ -119,11 +130,32 @@ class Store::Digest::Object
 
   public
 
+  # Create a new object, naively recording whatever is handed
   #
+  # @note use {.scan} or {#scan} to populate 
+  #
+  # @param content [IO, String, Proc, File, Pathname, ...] some content
+  # @param digests [Hash] the digests ascribed to the content
+  # @param size [Integer] assert the object's size
+  # @param type [String] assert the object's MIME type
+  # @param charset [String] the character set, if applicable
+  # @param language [String] the (RFC5646) language tag, if applicable
+  # @param encoding [String] the content-encoding (e.g. compression)
+  # @param ctime [Time] assert object creation time
+  # @param mtime [Time] assert object modification time
+  # @param ptime [Time] assert object metadata parameter modification time
+  # @param dtime [Time] assert object deletion time
+  # @param flags [Integer] validation state flags
+  # @param strict [true, false] raise an error on bad input
+  # @param fresh [true, false] assert "freshness" of object vis-a-vis the store
+  # @return [Store::Digest::Object] the object in question
   def initialize content = nil, digests: {}, size: 0,
       type: 'application/octet-stream', charset: nil, language: nil,
-      encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil, flags: 0,
-      strict: true
+      encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil,
+      flags: 0, strict: true, fresh: false
+
+    # snag this immediately
+    @fresh = !!fresh
 
     # check input on content
     @content = case content
@@ -214,15 +246,17 @@ class Store::Digest::Object
   #
   def self.scan content, digests: URI::NI.algorithms, mtime: nil,
       type: nil, language: nil, charset: nil, encoding: nil,
-      blocksize: BLOCKSIZE, strict: true, &block
+      blocksize: BLOCKSIZE, strict: true, fresh: false, &block
     self.new.scan content, digests: digests, mtime: mtime, type: type,
       language: language, charset: charset, encoding: encoding,
-      blocksize: blocksize, strict: strict, &block
+      blocksize: blocksize, strict: strict, fresh: fresh, &block
   end
 
   def scan content = nil, digests: URI::NI.algorithms, mtime: nil,
       type: nil, charset: nil, language: nil, encoding: nil,
-      blocksize: BLOCKSIZE, strict: true, &block
+      blocksize: BLOCKSIZE, strict: true, fresh: nil, &block
+    # update freshness if there is something to update
+    @fresh = !!fresh unless fresh.nil?
     # we put all the scanning stuff in here
     content = case content
               when nil          then self.content
@@ -292,11 +326,20 @@ class Store::Digest::Object
     if content.respond_to? :path
       # may as well use the path if it's available and more specific
       ps = MimeMagic.by_path(content.path)
-      ts = ps if ps and ps.child_of?(ts)
+      # XXX the need to do ts.to_s is a bug in mimemagic
+      ts = ps if ps and ps.child_of?(ts.to_s)
     end
     @type = !type || ts.child_of?(type) ? ts.to_s : type
 
     self
+  end
+
+  # Determine (or set) whether the object is "fresh", i.e. whether it
+  # is new (or restored), or had been previously been in the store.
+  #
+  # @param state [true, false]
+  def fresh? state = nil
+    state.nil? ? @fresh : @fresh = !!state
   end
 
   # Return the algorithms used in the object.

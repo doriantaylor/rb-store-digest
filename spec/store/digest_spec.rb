@@ -7,6 +7,7 @@ RSpec.describe Store::Digest do
 
   # actually no that's not true, we can test the objects in isolation:
 
+  context 'creating objects' do
   # object initializes blank
   # object defaults to application/octet-stream
   # object defaults to size 0
@@ -26,9 +27,11 @@ RSpec.describe Store::Digest do
   # user should not be able to overwrite size, ctime, ptime, or dtime
   # user should not be able to set type/charset/language/encoding to garbage
   # input for mtime/type/charset/language/encoding should be normalized
+  end
 
   # anyway, i will mark driver-specific tests with an asterisk *
 
+  context 'initializing the store' do
   # store should initialize
   # store should select the lmdb driver by default
   # store should accept the module or resolve the symbol to the module
@@ -44,7 +47,9 @@ RSpec.describe Store::Digest do
   # store should set a creation time once and never touch it again
   # store should set a modification time that starts out the same as ctime
   # store should initialize with objects/deleted/byte counts all zero
+  end
 
+  context 'storing objects' do
   # store should add a String/IO/File/Pathname/Store::Digest::Object
   # store should complain if IO is not seekable
   # store should complain if S:D:O is not in order
@@ -55,6 +60,20 @@ RSpec.describe Store::Digest do
   # store.add should no-op the same entry added a second time
   # store.add should nevertheless update metadata if different from existing
 
+  # store.add should set obj.fresh? to true if the object was not
+  #   previously present in the store
+  # store.add should set obj.fresh? to true if the object had been
+  #   previously deleted
+  # store.add should set obj.fresh? to true if any metadata has been
+  #   updated
+  # store.add should set obj.fresh? to false if the object was already
+  #   present
+  # store.add should set obj.fresh? to false if preserve: true and the
+  #   only difference in the new object is its mtime
+  # (store.add should set obj.fresh? to true otherwise)
+  end
+
+  context 'retrieving objects' do
   # store should get a String/IO/File/Pathname/Store::Digest::Object/URI::NI
   # store.get should scan an S:D:O if it is not scanned (ie, no digest
   #   URIs), and complain if it can't scan (ie, if there is no content)
@@ -64,7 +83,9 @@ RSpec.describe Store::Digest do
   # (Note: It may seem weird to `get` an object you already have, but
   # the return value is an implicit verification that the store *also*
   # has it. It is like this mainly for symmetry.)
-  
+  end
+
+  context 'removing objects' do
   # store should remove a URI::NI/Store::Digest::Object/String/IO/File/Pathname
   # store.remove returns the removed object
   # store.remove should set the object's dtime
@@ -74,7 +95,9 @@ RSpec.describe Store::Digest do
   # store.remove should decrement the byte count
   # store.remove should NOT decrement the object count
   # store.get should return a removed object (minus content, plus dtime)
+  end
 
+  context 'forgetting objects' do
   # store.forget is the same as store.remove obj, forget: true
   # store.forget should destroy its metadata entirely
   # store.forget should decrement the object count
@@ -82,6 +105,7 @@ RSpec.describe Store::Digest do
   #   previously deleted
   # store.forget should decrement byte count if the object was NOT
   #   previously deleted
+  end
 
   # store.objects/deleted/bytes should always remain accurate, no
   # matter how much traffic goes through the interface
@@ -118,4 +142,5 @@ RSpec.describe Store::Digest do
     end
     t.join
   end
+
 end

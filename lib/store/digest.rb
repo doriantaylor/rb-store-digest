@@ -79,12 +79,26 @@ class Store::Digest
 
   # alias_method :inspect, :to_s
 
-  # Add an object to the store.
-  # @note Prefabricated {Store::Digest::Object} instances will be rescanned.
+  # Add an object to the store. Takes pretty much anything that
+  # 
+  #
+  # @note Prefabricated {Store::Digest::Object} instances will be
+  #   rescanned.
+  #
+  # @note `:preserve` will cause a noop if object metadata is identical
+  #   save for `:ctime` and `:mtime` (`:ctime` is always ignored).
+  #
   # @param obj [IO,File,Pathname,String,Store::Digest::Object] the object
+  # @param type [String] the content type
+  # @param charset [String] the character set, if applicable
+  # @param language [String] the language, if applicable
+  # @param encoding [String] the encoding (eg compression) if applicable
+  # @param mtime [Time] the modification time, if not "now"
+  # @param strict [true, false] strict checking on metadata input
+  # @param preserve [false, true] preserve existing modification time
   # @return [Store::Digest::Object] The (potentially pre-existing) entry
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
-      mtime: nil, strict: true
+      mtime: nil, strict: true, preserve: false
     return unless obj
     #transaction do # |txn|
       obj = coerce_object obj, type: type, charset: charset,
@@ -101,10 +115,13 @@ class Store::Digest
         encoding: encoding, mtime: mtime) do |buf|
         tmp << buf
       end
-      obj.dtime = nil
-      if h = set_meta(obj)
-        # replace the object
 
+      # if we are scanning an object it is necessarily not deleted
+      obj.dtime = nil
+
+      # set_meta will return nil if there is no difference in what is set
+      if h = set_meta(obj, preserve: preserve)
+        # replace the object
 
         content = obj.content
 
@@ -114,7 +131,7 @@ class Store::Digest
           content = -> { path.open('rb') }
         end
 
-        obj = Store::Digest::Object.new content, **h
+        obj = Store::Digest::Object.new content, fresh: true, **h
 
         # now settle the blob into storage
         settle_blob obj[primary].digest, tmp, mtime: obj.mtime
@@ -125,9 +142,7 @@ class Store::Digest
 
         # eh just do this
         obj = get obj
-
-        # abort after because get will be a subtxn
-        # txn.abort
+        obj.fresh? false # object is not fresh since we already have it
       end
 
       obj
