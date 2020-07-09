@@ -68,10 +68,14 @@ RSpec.describe Store::Digest do
 
 
   context 'storing objects' do
+    # XXX a few of these are redundant
+
     # store should add a String/IO/File/Pathname/Store::Digest::Object
     # store should complain if IO is not seekable
     # store should complain if S:D:O is not in order
     # store should complain if obj.size does not match content size
+
+
     # store.add should increment the store's byte and object counts
     # store.add should ignore any supplied ctime/ptime/dtime
     # store.add should return a retrieved object (with content as a proc)
@@ -95,22 +99,26 @@ RSpec.describe Store::Digest do
     end
 
     it 'should set obj.fresh? to true on a substantive metadata change' do
-      # store.add should set obj.fresh? to true if any metadata has been
-      #   updated
+      # store.add should set obj.fresh? to true if any metadata has
+      #   been updated
+      obj = subject.add 'lol', type: 'application/x-derp'
+      expect(obj.fresh?).to be true
     end
 
     it 'should set obj.fresh? to false for an existing object' do
-      # store.add should set obj.fresh? to false if the object was already
-      #   present
-      obj = subject.add 'lol'
+      # store.add should set obj.fresh? to false if the object was
+      # already present
+      # (lol god now we are repeating this mimetype to make the tests pass)
+      obj = subject.add 'lol', type: 'application/x-derp'
       expect(obj.fresh?).to be false
     end
 
     it 'should set obj.fresh? to false on preserve: true' do
       # store.add should set obj.fresh? to false if preserve: true and the
-      #   only difference in the new object is its mtime
+      # only difference in the new object is its mtime
       # (store.add should set obj.fresh? to true otherwise)
-      obj = subject.add 'lol', mtime: Time.now + 10, preserve: true
+      obj = subject.add 'lol', type: 'application/x-derp',
+        mtime: Time.now + 10, preserve: true
       expect(obj.fresh?).to be false
     end
   end
