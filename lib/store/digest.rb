@@ -67,7 +67,7 @@ class Store::Digest
 
     extend driver
 
-    # 
+    #
     setup(**options)
   end
 
@@ -80,7 +80,6 @@ class Store::Digest
   # alias_method :inspect, :to_s
 
   # Add an object to the store. Takes pretty much anything that
-  # 
   #
   # @note Prefabricated {Store::Digest::Object} instances will be
   #   rescanned.
@@ -150,7 +149,7 @@ class Store::Digest
   end
 
   # Retrieve an object from the store.
-  # @param 
+  # @param obj [URI]
   def get obj
     body = -> do
       obj = coerce_object obj
@@ -187,7 +186,7 @@ class Store::Digest
 
   # Remove an object from the store and "forget" it ever existed,
   # i.e., purge it from the metadata.
-  # 
+  #
   def forget obj
     remove obj, forget: true
   end

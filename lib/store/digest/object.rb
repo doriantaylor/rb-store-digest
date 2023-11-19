@@ -3,7 +3,6 @@ require 'store/digest/version'
 require 'uri'
 require 'uri/ni'
 require 'mimemagic'
-require 'mimemagic/overlay'
 
 class MimeMagic
   # XXX erase this when these methods get added
@@ -132,7 +131,7 @@ class Store::Digest::Object
 
   # Create a new object, naively recording whatever is handed
   #
-  # @note use {.scan} or {#scan} to populate 
+  # @note use {.scan} or {#scan} to populate
   #
   # @param content [IO, String, Proc, File, Pathname, ...] some content
   # @param digests [Hash] the digests ascribed to the content

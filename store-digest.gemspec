@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
 
   spec.files         = Dir.chdir(File.expand_path('..', __FILE__)) do
     `git ls-files -z`.split("\x0").reject do |f|
-      f.match(%r{^(test|spec|features)/}) 
+      f.match(%r{^(test|spec|features)/})
     end
   end
   spec.bindir        = 'exe'
@@ -24,16 +24,16 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   # ruby
-  spec.required_ruby_version = '~> 2.0'
+  spec.required_ruby_version = '>= 2.7'
 
   # dev/test dependencies
-  spec.add_development_dependency 'bundler', '~> 2.1'
-  spec.add_development_dependency 'rake',    '~> 13.0'
-  spec.add_development_dependency 'rspec',   '~> 3.9'
+  spec.add_development_dependency 'bundler', '>= 2.1'
+  spec.add_development_dependency 'rake',    '>= 13.0'
+  spec.add_development_dependency 'rspec',   '>= 3.9'
 
   # stuff we use
   spec.add_runtime_dependency 'base32',    '>= 0.3.2'
-  spec.add_runtime_dependency 'lmdb',      '>= 0.5.3' # my hacks
+  spec.add_runtime_dependency 'lmdb',      '>= 0.6.1' # my hacks
   spec.add_runtime_dependency 'mimemagic', '>= 0.3.3'
   spec.add_runtime_dependency 'uri-ni',    '>= 0.1.4'
 end

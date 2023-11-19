@@ -10,6 +10,8 @@ module Store::Digest::Driver::LMDB
   protected
 
   def setup **options
+    options[:mapsize] = int_bytes options[:mapsize] if options[:mapsize]
+
     super
   end
 end
