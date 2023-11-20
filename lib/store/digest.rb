@@ -104,6 +104,7 @@ class Store::Digest
         language: language, encoding: encoding, mtime: mtime, strict: strict
       raise ArgumentError, 'We need something to store!' unless obj.content?
 
+      # this method is helicoptered in
       tmp = temp_blob
 
       # XXX this is stupid; figure out a better way to do this

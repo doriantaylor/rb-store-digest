@@ -324,7 +324,7 @@ class Store::Digest::Object
     ts = MimeMagic.by_magic(sample) || MimeMagic.default_type(sample)
     if content.respond_to? :path
       # may as well use the path if it's available and more specific
-      ps = MimeMagic.by_path(content.path)
+      ps = MimeMagic.by_path(content.path.to_s)
       # XXX the need to do ts.to_s is a bug in mimemagic
       ts = ps if ps and ps.child_of?(ts.to_s)
     end
