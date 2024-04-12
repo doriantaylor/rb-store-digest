@@ -79,7 +79,8 @@ class Store::Digest
 
   # alias_method :inspect, :to_s
 
-  # Add an object to the store. Takes pretty much anything that
+  # Add an object to the store. Takes pretty much anything that makes
+  # sense to throw at it.
   #
   # @note Prefabricated {Store::Digest::Object} instances will be
   #   rescanned.
@@ -95,7 +96,9 @@ class Store::Digest
   # @param mtime [Time] the modification time, if not "now"
   # @param strict [true, false] strict checking on metadata input
   # @param preserve [false, true] preserve existing modification time
+  #
   # @return [Store::Digest::Object] The (potentially pre-existing) entry
+  #
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
       mtime: nil, strict: true, preserve: false
     return unless obj

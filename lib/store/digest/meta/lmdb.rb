@@ -125,7 +125,7 @@ module Store::Digest::Meta::LMDB
     @dbs[index.to_sym].delete? key, bin
   end
 
-  # return an enumerator 
+  # return an enumerator
   def index_get index, min, max = nil, range: false, &block
     # min and max will be binary values and the cursor will return a range
     min = index_pack(min)
@@ -208,7 +208,7 @@ module Store::Digest::Meta::LMDB
       dbs = RECORD.map do |k|
         [k, [:dupsort]]
       end.to_h.merge(a.map { |k| [k, []] }.to_h)
-      
+
       @dbs.merge!(dbs.map do |name, flags|
         [name, @lmdb.database(name.to_s,
           (flags + [:create]).map { |f| [f, true] }.to_h)]
@@ -229,7 +229,7 @@ module Store::Digest::Meta::LMDB
   #
   # @param obj [Store::Digest::Object] the object to store
   # @param preserve [false, true] whether to preserve the mtime
-  # @return [nil, Hash] maybe the metadata content of the object 
+  # @return [nil, Hash] maybe the metadata content of the object
   def set_meta obj, preserve: false
     raise ArgumentError,
       'Object does not have a complete set of digests' unless
@@ -409,7 +409,7 @@ module Store::Digest::Meta::LMDB
 
       @dbs[primary][bin] = deflate(newh)
       control_add :deleted, 1
-      control_add :bytes, -newh[:size] 
+      control_add :bytes, -newh[:size]
 
       # okay now we update the indexes
       RECORD.each do |k|
@@ -461,7 +461,6 @@ module Store::Digest::Meta::LMDB
   # Return the set of algorithms initialized in the database.
   # @return [Array] the algorithms
   def algorithms
-    
     @algorithms ||= @lmdb.transaction do
       if ret = @dbs[:control]['algorithms']
         ret.strip.split(/\s*,+\s*/).map(&:to_sym)
