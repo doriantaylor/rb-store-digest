@@ -1,0 +1,35 @@
+#+STARTUP: showall indent hidestars
+* TODO upgrade metadata format
+- [ ] get rid of the idea of a 'primary' digest algorithm
+  - [ ] change the main record to being keyed by integers and contain all hashes
+    - old: ≥209 bytes + 316 mapping
+    - new: ≥218 + 220 mapping
+  - [ ] make digest -> integer mapping
+- [ ] add version to metadata
+- [ ] add function to upgrade metadata store
+* TODO add cache capability
+- [ ] add fields to control:
+  - [ ] total bytes in cache
+  - [ ] total objects cache
+- [ ] cache clearing mechanism
+  - [ ] hook cache expiration to adding a new object
+    - [ ] decrement bytes and count for both cache and main data from control
+    - [ ] increment deleted bytes and count
+- [ ] when cache is overwritten by the identical non-cache object, it does the right thing
+  - [ ] clear cache flag from the metadata record
+  - [ ] decrement cache summaries from control database
+* TODO add indices
+- [ ] qualitative attributes
+  - [ ] content-type
+  - [ ] language
+  - [ ] charset
+  - [ ] encoding
+- [ ] time stamps
+  - [ ] created (record added to store)
+  - [ ] modified (from initial insertion)
+  - [ ] metadata updated
+  - [ ] record deleted
+- [ ] index hooks
+  - [ ] add record
+  - [ ] update value
+  - [ ] remove record
