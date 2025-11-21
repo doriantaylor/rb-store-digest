@@ -87,13 +87,14 @@ class Store::Digest::Object
   ENCODING_VALID   = 1 << 5
   SYNTAX_CHECKED   = 1 << 6
   SYNTAX_VALID     = 1 << 7
+  IS_CACHE         = 1 << 8
 
   LABELS = {
     size:     'Size (Bytes)',
     ctime:    'Added to Store',
     mtime:    'Last Modified',
     ptime:    'Properties Modified',
-    dtime:    'Deleted',
+    dtime:    'Deleted (Expires)',
     type:     'Content Type',
     language: '(Natural) Language',
     charset:  'Character Set',
@@ -102,7 +103,7 @@ class Store::Digest::Object
 
   MANDATORY = %i[size ctime mtime ptime]
   OPTIONAL  = %i[dtime type language charset encoding]
-  FLAG      = %i[content-type charset content-encoding syntax].freeze
+  FLAG      = %i[content-type charset content-encoding syntax cache].freeze
   STATE     = %i[unverified invalid recheck valid].freeze
 
   def coerce_time t, k

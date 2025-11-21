@@ -10,7 +10,7 @@
 * TODO add cache capability
 - [ ] add fields to control:
   - [ ] total bytes in cache
-  - [ ] total objects cache
+  - [ ] total objects in cache
 - [ ] cache clearing mechanism
   - [ ] hook cache expiration to adding a new object
     - [ ] decrement bytes and count for both cache and main data from control
@@ -33,3 +33,5 @@
   - [ ] add record
   - [ ] update value
   - [ ] remove record
+* TODO web ui
+- see [[https://github.com/doriantaylor/rb-store-digest-http][Store:::Digest::HTTP]]

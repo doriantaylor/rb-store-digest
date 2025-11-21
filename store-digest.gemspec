@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.license       = 'Apache-2.0'
   spec.homepage      = 'https://github.com/doriantaylor/rb-store-digest'
   spec.summary       = 'Lightweight, multi-digest content-addressable store'
-  spec.description   = <<-DESC
+  spec.description   = <<~DESC
   DESC
 
   spec.files         = Dir.chdir(File.expand_path('..', __FILE__)) do
@@ -24,7 +24,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   # ruby
-  spec.required_ruby_version = '>= 2.7'
+  spec.required_ruby_version = '>= 3.0'
 
   # dev/test dependencies
   spec.add_development_dependency 'bundler', '>= 2.1'
@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
 
   # stuff we use
   spec.add_runtime_dependency 'base32',    '>= 0.3.2'
-  spec.add_runtime_dependency 'lmdb',      '>= 0.6.1' # my hacks
+  spec.add_runtime_dependency 'lmdb',      '>= 0.6.6' # my hacks
   spec.add_runtime_dependency 'mimemagic', '>= 0.3.3'
   spec.add_runtime_dependency 'uri-ni',    '>= 0.1.4'
 end

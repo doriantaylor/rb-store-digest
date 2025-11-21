@@ -174,18 +174,14 @@ class Store::Digest
       obj.scan digests: algorithms, blocksize: 2**20
     end
 
-    # remove blob and mark metadata entry as deleted
-    meta = nil
+    # remove or mark metadata entry as deleted and remove blob
     transaction do
-      meta = forget ? remove_meta(obj) : mark_meta_deleted(obj)
-    end
-
-    if meta
-      if blob = remove_blob(meta[:digests][primary].digest)
-        return Store::Digest::Object.new blob, **meta
+      if meta = forget ? remove_meta(obj) : mark_meta_deleted(obj)
+        if blob = remove_blob(meta[:digests][primary].digest)
+          Store::Digest::Object.new blob, **meta
+        end
       end
     end
-    nil
   end
 
   # Remove an object from the store and "forget" it ever existed,
