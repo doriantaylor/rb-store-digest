@@ -1,5 +1,5 @@
 # grab the symbols so we don't have to indent
-require_relative '../version'
+require_relative 'version'
 
 # This is an abstract module for metadata operations. All required
 # methods are defined, and raise {NotImplementedError}.

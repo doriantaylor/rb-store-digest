@@ -790,7 +790,7 @@ module Store::Digest::Meta::LMDB
       # in the v1 layout, `primary` is only cosmetic and we have an
       # `entry` database keyed by (native-endian) integer
 
-      now = Time.now at: ?Z
+      now = Time.now in: ?Z
 
       %i[ctime mtime].each { |k| control_set k, now, maybe: true }
 
@@ -804,14 +804,14 @@ module Store::Digest::Meta::LMDB
       # "etime" index for cache entry expirations) and pairs it with
       # hash algorithm indices to attach them to database flags, which
       # are then shoveled en masse into the LMDB factory method.
-      @dbs.merge!(
-        RECORD.except(:flags).merge({ etime: Time }).transform_values do |type|
-          flags = %i[dupsort]
-          flags += %i[integerkey integerdup] if [Integer, Time].include? type
+      dbs = RECORD.except(:flags).merge({ etime: Time }).transform_values do |type|
+        flags = %i[dupsort]
+        flags += [Integer, Time].include?(type) ? %i[integerkey integerdup] : []
       end.merge(
         # these are always going to be a fixed length (hash -> size_t)
-        algorithms.map { |k| [k, %i[dupsort dupfixed]] }.to_h
-      ).merge({ entry: [:integerkey] })).transform_values do |flags|
+        algorithms.map { |k| [k, %i[dupsort dupfixed]] }.to_h,
+        { entry: [:integerkey] }
+      ).transform_values do |flags|
         (flags + [:create]).map { |flag| [flag, true] }.to_h
       end
 
@@ -849,18 +849,21 @@ module Store::Digest::Meta::LMDB
     # Get the "last" (highest-ordinal) key of an integer-keyed database.
     #
     # @param db [LMDB::Database,Symbol]
+    # @param raw [false, true] whether to decode the pointer
     #
     # @return [Integer]
     #
-    def last_key db
+    def last_key db, raw: false
       db = @dbs[db] if db.is_a? Symbol
       raise ArgumentError, 'Wrong/malformed database' unless
         db.is_a? ::LMDB::Database and db.flags[:integerkey]
 
-      # XXX should we reserve 0?
-      return 0 if db.empty?
-      # the last entry in the database should be the highest number
-      db.cursor { |c| c.last }.first.unpack1 ?J
+      # the last entry in the database should be the highest number,
+      # but also not sure if we want to reserve zero
+      out = db.empty? ? [0].pack(?J) : db.cursor { |c| c.last }.first
+
+      # return raw pointer
+      raw ? out : out.unpack1(?J)
     end
 
     # Retrieve the value of a control field.
@@ -891,7 +894,7 @@ module Store::Digest::Meta::LMDB
         "value should be instance of #{type}" unless value.is_a? type
 
       @dbs[:control][key.to_s] = db_encode value, type unless
-        maybe && @dbs[control].has?(key)
+        maybe && @dbs[:control].has?(key.to_s)
     end
 
     # Increment an existing ({Integer}) control field by a value.
@@ -932,8 +935,12 @@ module Store::Digest::Meta::LMDB
       # XXX just add etime here for now
       cls = RECORD.merge({etime: Time})[index] or raise ArgumentError,
         "No record for #{index}"
+
+      warn "#{index}, #{key.inspect}"
+
       key = db_encode key, cls
       ptr = ptr.is_a?(String) ? ptr : [ptr].pack(?J)
+
 
       @dbs[index.to_sym].put? key, ptr
     end
@@ -1004,10 +1011,11 @@ module Store::Digest::Meta::LMDB
     # objects.
     #
     # @param obj [Store::Digest::Object, Hash]
+    # @param raw [false, true] whether to return the raw bytes
     #
     # @return [Integer, nil]
     #
-    def get_ptr obj
+    def get_ptr obj, raw: false
       # normalize the object and obtain a workable hash algorithm
       obj  = obj.to_h
       obj  = obj[:digests] if obj.key? :digests
@@ -1026,7 +1034,8 @@ module Store::Digest::Meta::LMDB
       raise ArgumentError, "Unexpected #{uri.class}" unless uri.is_a? URI::NI
 
       # now return the pointer (or nil)
-      @dbs[algo][uri.digest]&.unpack1(?J)
+      out = @dbs[algo][uri.digest] or return
+      raw ? out : out.unpack1(?J)
     end
 
     # Retrieve a record from the database.
@@ -1079,12 +1088,13 @@ module Store::Digest::Meta::LMDB
       # with a `dtime` in the past is assumed to be deleted.
 
       @lmdb.transaction do
+        # initial information
+        now   = Time.now
+        ptr   = get_ptr(obj, raw: true) || last_key(:entry, raw: true)
+        newh  = obj.to_h
+        oldh  = nil
 
-        now    = Time.now
-        ptr    = get_ptr obj
-        newh   = obj.to_h
-        oldh   = nil
-
+        # other things we reuse
         delta    = 0 # whether we are adding or removing a record
         deleted  = newh[:dtime] && newh[:dtime] <= now
         is_cache = !!(newh[:flags] || [])[8] # may not be present
@@ -1174,7 +1184,7 @@ module Store::Digest::Meta::LMDB
           RECORD.except(:flags).keys.each do |k|
             if newh[k]
               # special case for non-deleted cache
-              kk = k == :dtime && is_cache && !deleted ? :etime : :dtime
+              kk = k == :dtime ? (is_cache && !deleted) ? :etime : :dtime : k
               index_add kk, newh[k], ptr
             end
           end

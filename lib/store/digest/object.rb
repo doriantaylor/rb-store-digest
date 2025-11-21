@@ -48,7 +48,62 @@ class MimeMagic
   end
 end
 
+# Store entry object class.
+#
 class Store::Digest::Object
+
+  # These is a struct for the bank of flags, with a couple of extra
+  # methods for parsing
+  #
+  Flags = Struct.new('Flags', :type_checked, :type_valid,
+                     :charset_checked, :charset_valid,
+                     :encoding_checked, :encoding_valid,
+                     :syntax_checked, :syntax_valid, :cache) do |name|
+
+    # Initialize a vector of flags
+    #
+    # @param integer [Integer, Array]
+    # @param length  [nil, Integer]
+    #
+    # @return [Array]
+    #
+    def self.from integer, length: self.members.size
+      if integer.is_a? Integer
+        tmp = integer.digits(2).reverse
+      elsif integer.respond_to? :to_a
+        tmp = integer.to_a
+      else
+        raise ArgumentError, 'Input must be an integer or array'
+      end
+
+      tmp.map! { |b| b && b != 0 }
+
+      if length
+        tmp = tmp.first length
+        tmp = [false] * (length - tmp.length) + tmp
+      end
+
+      # we do this because `new` doesn't do this
+      self.[](*tmp)
+    end
+
+    # Turn an arbitrary {Array} back into an {Integer}.
+    #
+    # @param array [Array]
+    #
+    # @return [Integer]
+    #
+    def self.to_i array
+      array.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
+    end
+
+    # wish there was a cleaner way to do derive individual instance
+    # methods from class methods
+    begin
+      cm = self.method :to_i
+      define_method(:to_i) { cm.call self }
+    end
+  end
 
   private
 
