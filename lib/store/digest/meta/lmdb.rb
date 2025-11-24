@@ -335,7 +335,7 @@ module Store::Digest::Meta::LMDB
       # XXX we might actually wanna dupsort the non-primary digests too
       dbs = RECORD.map do |k|
         [k, [:dupsort]]
-      end.to_h.merge(a.map { |k| [k, []] }.to_h)
+      end.to_h.merge(algorithms.map { |k| [k, []] }.to_h)
 
       @dbs.merge!(dbs.map do |name, flags|
                     [name, @lmdb.database(
