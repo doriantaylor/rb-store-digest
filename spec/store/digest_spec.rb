@@ -124,7 +124,7 @@ RSpec.describe Store::Digest do
       # only difference in the new object is its mtime
       # (store.add should set obj.fresh? to true otherwise)
       obj = subject.add 'lol', type: 'application/x-derp',
-        mtime: Time.now + 10, preserve: true
+        mtime: Time.now - 10, preserve: true
       expect(obj.fresh?).to be_falsy
     end
   end
