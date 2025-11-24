@@ -257,7 +257,7 @@ module Store::Digest::Meta::LMDB
     out = {}
     @lmdb.transaction do
       if index
-        warn params.inspect
+        # warn params.inspect
         if INTS[index]
           index_get index, *params[index], range: true do |_, v|
             u = URI("ni:///#{primary};")
@@ -278,7 +278,7 @@ module Store::Digest::Meta::LMDB
           out.select! do |_, obj|
             rest.map do |param|
               if val = obj.send(param)
-                warn "#{param} #{params[param]} <=> #{val}"
+                # warn "#{param} #{params[param]} <=> #{val}"
                 if INTS[param]
                   min, max = params[param]
                   if min && max
@@ -320,7 +320,7 @@ module Store::Digest::Meta::LMDB
 
     def setup_dbs
 
-      now = Time.now
+      now = Time.now in: ?Z
       %w[ctime mtime].each do |t|
         unless @dbs[:control].has? t
           @dbs[:control][t] = [now.to_i].pack ?N
@@ -472,7 +472,7 @@ module Store::Digest::Meta::LMDB
         # noop if object is present and not deleted and no details have changed
         bin  = obj[primary].digest
         newh = obj.to_h
-        now  = Time.now
+        now  = Time.now in: ?Z
 
         change = newh[:dtime] ? -1 : 1 # net change in records
         oldrec = @dbs[primary][bin]
@@ -595,7 +595,7 @@ module Store::Digest::Meta::LMDB
       body = -> do
         hash = get_meta(obj) or return
         bin  = hash[:digests][primary].digest
-        now  = Time.now
+        now  = Time.now in: ?Z
 
         RECORD.each { |k| index_rm k, hash[k], bin }
         hash[:digests].each { |algo, uri| @dbs[algo].delete uri.digest }
@@ -628,7 +628,7 @@ module Store::Digest::Meta::LMDB
         return if oldh[:dtime]
 
         bin = oldh[:digests][primary].digest
-        now = Time.now
+        now = Time.now in: ?Z
 
         newh = oldh.merge(obj.to_h) do |k, ov, nv|
           case k
@@ -666,55 +666,10 @@ module Store::Digest::Meta::LMDB
   # This is the version 1 database layout.
   module V1
 
-    # Little baby class to go from an integer to an array of flags and back.
-    class Flags < Array
-
-      # Initialize a vector of flags
-      #
-      # @param integer [Integer, Array]
-      # @param length  [nil, Integer]
-      #
-      # @return [Array]
-      #
-      def self.from integer, length: nil
-        if integer.is_a? Integer
-          tmp = integer.digits(2).reverse
-        elsif integer.respond_to? :to_a
-          tmp = integer.to_a
-        else
-          raise ArgumentError, 'Input must be an integer or array'
-        end
-
-        tmp.map! { |b| b && b != 0 }
-
-        if length
-          tmp = tmp.first length
-          tmp = [false] * (length - tmp.length) + tmp
-        end
-
-        # we do this because `new` doesn't do this
-        self.[](*tmp)
-      end
-
-      # Turn an arbitrary {Array} back into an {Integer}.
-      #
-      # @param array [Array]
-      #
-      # @return [Integer]
-      #
-      def self.to_i array
-        array.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
-      end
-
-      # wish there was a cleaner way to do derive individual instance
-      # methods from class methods
-      begin
-        cm = self.method :to_i
-        define_method(:to_i) { cm.call self }
-      end
-    end
-
     private
+
+    # import the flags
+    Flags = Store::Digest::Object::Flags
 
     # XXX do we want to introduce dry-types? didn't i try before and
     # it was a huge clusterfuck?
@@ -727,25 +682,25 @@ module Store::Digest::Meta::LMDB
     DECODE_NOOP   = ENCODE_NOOP
     ENCODE_TOKEN  = -> x { x.to_s }
     DECODE_TOKEN  = -> x { x.empty? ? nil : x }
-    ENCODE_FLAGS  = -> x { Flags.to_i x.first(9) }
-    DECODE_FLAGS  = -> x { Flags.from x, length: 9 }
+    ENCODE_FLAGS  = -> x { Flags.to_i x }
+    DECODE_FLAGS  = -> x { Flags.from x }
     if ARCH == 64
       # you get microsecond resolution
       ENCODE_TIME = -> x { x ? x.to_i * 1_000_000 + x.usec : 0 }
       DECODE_TIME = -> x {
-        x == 0 ? nil : Time.at(x / 1_000_000, x % 1_000_000, :usec, at: ?Z)
+        x == 0 ? nil : Time.at(x / 1_000_000, x % 1_000_000, :usec, in: ?Z)
       }
     else
       # and you do not
       ENCODE_TIME = -> x { x ? x.to_i : 0 }
-      DECODE_TIME = -> x { x == 0 ? nil : Time.at(x, at: ?Z) }
+      DECODE_TIME = -> x { x == 0 ? nil : Time.at(x, in: ?Z) }
     end
 
     # { Class => [pack, encode, decode] }
     COERCE = {
-      Integer => [LONG, ENCODE_NOOP,  DECODE_NOOP],
+      Integer => [LONG, ENCODE_NOOP,  DECODE_NOOP ],
       String  => ['Z*', ENCODE_TOKEN, DECODE_TOKEN],
-      Time    => [LONG, ENCODE_TIME,  DECODE_TIME],
+      Time    => [LONG, ENCODE_TIME,  DECODE_TIME ],
       Flags   => [?S,   ENCODE_FLAGS, DECODE_FLAGS],
     }
 
@@ -780,7 +735,7 @@ module Store::Digest::Meta::LMDB
     }
 
     # the record string (after the hashes are removed)
-    PACKED = RECORD.values.map { |v| COERCE[v] }.join
+    PACKED = RECORD.values.map { |v| COERCE[v].first }.join
 
     # Set up the V1 database layout.
     #
@@ -809,7 +764,7 @@ module Store::Digest::Meta::LMDB
         flags += [Integer, Time].include?(type) ? %i[integerkey integerdup] : []
       end.merge(
         # these are always going to be a fixed length (hash -> size_t)
-        algorithms.map { |k| [k, %i[dupsort dupfixed]] }.to_h,
+        algorithms.map { |k| [k, %i[dupsort]] }.to_h, # dupfixed bad?
         { entry: [:integerkey] }
       ).transform_values do |flags|
         (flags + [:create]).map { |flag| [flag, true] }.to_h
@@ -860,10 +815,10 @@ module Store::Digest::Meta::LMDB
 
       # the last entry in the database should be the highest number,
       # but also not sure if we want to reserve zero
-      out = db.empty? ? [0].pack(?J) : db.cursor { |c| c.last }.first
+      out = db.empty? ? 0 : (db.cursor { |c| c.last }.first.unpack1(?J) + 1)
 
       # return raw pointer
-      raw ? out : out.unpack1(?J)
+      raw ? [out].pack(?J) : out
     end
 
     # Retrieve the value of a control field.
@@ -936,7 +891,7 @@ module Store::Digest::Meta::LMDB
       cls = RECORD.merge({etime: Time})[index] or raise ArgumentError,
         "No record for #{index}"
 
-      warn "#{index}, #{key.inspect}"
+      # warn "#{index}, #{key.inspect}"
 
       key = db_encode key, cls
       ptr = ptr.is_a?(String) ? ptr : [ptr].pack(?J)
@@ -982,14 +937,14 @@ module Store::Digest::Meta::LMDB
       # get the digest algos
       ds = algorithms.map do |a|
         uri = URI::NI.build(scheme: 'ni', path: "/#{a}")
-        uri.digest = rec.slice!(0, DIGESTS[a])
+        uri.digest = raw.slice!(0, DIGESTS[a])
         [a, uri]
       end.to_h
 
       # love this for me
-      { digests: ds }.merge RECORD.keys.zip(raw.unpack(PACKED)).map do |k, v|
+      { digests: ds }.merge(RECORD.keys.zip(raw.unpack(PACKED)).map do |k, v|
         [k, COERCE[RECORD[k]].last.call(v)]
-      end.to_h
+      end.to_h)
     end
 
     # Return a packed string suitable to store as a record.
@@ -1019,6 +974,7 @@ module Store::Digest::Meta::LMDB
       # normalize the object and obtain a workable hash algorithm
       obj  = obj.to_h
       obj  = obj[:digests] if obj.key? :digests
+
       algo = if obj.key? primary
                primary
              else
@@ -1028,13 +984,20 @@ module Store::Digest::Meta::LMDB
                end.detect { |x| obj.key? x.first }.first
              end or return
 
+      # warn "algo: #{algo} #{obj[algo.to_sym]} -> #{obj[algo.to_sym].hexdigest}"
+
+      # wat = {}
+      # @dbs[algo.to_sym].each { |k, v| wat[k.unpack1 'H*'] = v.unpack1 ?J }
+
+      # warn wat.inspect
+
       # this is a private method so we can control what its inputs are
       # but it *should* map to a URI::NI; string hashes are too ambiguous
       uri = obj[algo.to_sym]
       raise ArgumentError, "Unexpected #{uri.class}" unless uri.is_a? URI::NI
 
       # now return the pointer (or nil)
-      out = @dbs[algo][uri.digest] or return
+      out = @dbs[algo.to_sym][uri.digest] or return
       raw ? out : out.unpack1(?J)
     end
 
@@ -1050,8 +1013,9 @@ module Store::Digest::Meta::LMDB
       @lmdb.transaction(true) do
         # get the pointer
         ptr = case obj
-              when Hash, Store::Digest::Object then get_ptr obj
-              when Integer then obj
+              when String then obj
+              when Hash, Store::Digest::Object then get_ptr obj, raw: true
+              when Integer then [obj].pack ?J
               when URI::NI then @dbs[obj.algorithm.to_sym][obj.digest]
               else
                 raise ArgumentError, "Cannot process an #{obj.class}"
@@ -1087,12 +1051,14 @@ module Store::Digest::Meta::LMDB
       # be no greater than `now` unless the object is cache. an object
       # with a `dtime` in the past is assumed to be deleted.
 
-      @lmdb.transaction do
+      @lmdb.transaction do |txn|
         # initial information
-        now   = Time.now
+        now   = Time.now in: ?Z
         ptr   = get_ptr(obj, raw: true) || last_key(:entry, raw: true)
         newh  = obj.to_h
         oldh  = nil
+
+        # warn ptr.inspect
 
         # other things we reuse
         delta    = 0 # whether we are adding or removing a record
@@ -1109,12 +1075,14 @@ module Store::Digest::Meta::LMDB
           newh[:ptime] ||= oldh[:ptime]
           newh[:mtime] = (preserve ? (oldh[:mtime] || newh[:mtime]) :
                           (newh[:mtime] || oldh[:mtime])) || now
+
           # only the old value if the new one isn't specified
           %i[type language charset encoding].each do |key|
             newh[key] ||= oldh[key]
           end
 
-          was_del = oldh[:dtime] && oldh[:dtime] <= now
+          # determine if the old record is a tombstone
+          tombstone = oldh[:dtime] && oldh[:dtime] <= now
 
           # OKAY HERE IS THE ALL-IMPORTANT CACHE LOGIC:
           #
@@ -1136,7 +1104,7 @@ module Store::Digest::Meta::LMDB
             # the record is not cache but it could be a tombstone. we
             # can overwrite it with cache if it is, but not if it
             # isn't, because the implication is something is using it.
-            if was_del
+            if tombstone
               newh[:dtime] ||= now + control_get(:expiry)
               delta = 1
             else
@@ -1147,11 +1115,15 @@ module Store::Digest::Meta::LMDB
           else
             # neither is cache; we are updating something else.
             # this is whatever the old one was
-            newh[:dtime] ||= oldh[:dtime]
+            newh[:dtime] ||= oldh[:dtime] if deleted
           end
 
           # accumulate which parts of the record got changed
           changed = RECORD.keys.select { |k| newh[k] != oldh[k] }
+
+          # changed.each do |change|
+          #   warn "#{change}: #{oldh[change]} -> #{newh[change]}"
+          # end
 
           # if this is empty there is nothing to do
           break if changed.empty?
@@ -1171,14 +1143,20 @@ module Store::Digest::Meta::LMDB
             end
           end
         else
+
           # we are unambiguously adding a thing
           delta = deleted ? 0 : 1
 
           newh[:ctime] ||= now
           newh[:mtime] ||= now
           newh[:ptime] ||= now
+          newh[:type]  ||= 'application/octet-stream'
 
-          newh[:type] ||= 'application/octet-stream'
+          # set the algo mappings
+          algorithms.each do |algo|
+            # warn "setting #{algo} -> #{obj[algo].hexdigest}"
+            @dbs[algo].put? obj[algo].digest, ptr
+          end
 
           # set the indices
           RECORD.except(:flags).keys.each do |k|
@@ -1218,6 +1196,8 @@ module Store::Digest::Meta::LMDB
         # and finally update the mtime
         control_set :mtime, now
 
+        txn.commit
+
         newh
       end
     end
@@ -1232,9 +1212,9 @@ module Store::Digest::Meta::LMDB
     def mark_meta_deleted obj
       @lmdb.transaction do
         # nothing to do if there's no entry
-        ptr = get_ptr(obj) or break
+        ptr = get_ptr(obj, raw: true) or break
         rec = get_meta ptr
-        now = Time.now
+        now = Time.now in: ?Z
 
         # it's already deleted and we don't need to do anything
         break if rec[:dtime] and rec[:dtime] < now
@@ -1274,7 +1254,7 @@ module Store::Digest::Meta::LMDB
         # nothing to do if there's no entry
         ptr = get_ptr(obj) or break
         rec = get_meta ptr
-        now = Time.now
+        now = Time.now in: ?Z
 
         # overwrite the dtime
         deleted = rec[:dtime] and rec[:dtime] < now

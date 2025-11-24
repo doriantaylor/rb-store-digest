@@ -6,19 +6,38 @@ require 'mimemagic'
 
 class MimeMagic
   # XXX erase this when these methods get added
-  unless self.method_defined? :parents
+  unless singleton_class.method_defined? :parents
     def self.parents type
-      TYPES.fetch(type, [nil,[]])[1].map { |t| new t }.uniq
+      TYPES.fetch(type.to_s, [nil,[]])[1].map { |t| new t }.uniq
     end
   end
 
-  unless self.method_defined? :ancestor_types
-    def self.ancestor_types type
-      parents(type).map { |t| ancestors(t) }.flatten.uniq
+  unless method_defined? :parents
+    def parents
+      out = TYPES.fetch(type.to_s.downcase, [nil, []])[1].map do |x|
+        self.class.new x
+      end
+      # add this unless we're it
+      out << self.class.new('application/octet-stream') if
+        out.empty? and type.downcase != 'application/octet-stream'
+
+      out.uniq
     end
   end
 
-  unless self.method_defined? :binary?
+  unless method_defined? :lineage
+    def lineage
+      ([self] + parents.map { |t| t.lineage }.flatten).uniq
+    end
+  end
+
+  unless method_defined? :descendant_of?
+    def descendant_of? type
+      lineage.map(&:type).include? type.to_s.downcase
+    end
+  end
+
+  unless singleton_class.method_defined? :binary?
     def self.binary? thing
       sample = nil
 
@@ -41,7 +60,7 @@ class MimeMagic
     end
   end
 
-  unless self.method_defined? :default_type
+  unless singleton_class.method_defined? :default_type
     def self.default_type thing
       new self.binary?(thing) ? 'application/octet-stream' : 'text/plain'
     end
@@ -55,33 +74,43 @@ class Store::Digest::Object
   # These is a struct for the bank of flags, with a couple of extra
   # methods for parsing
   #
-  Flags = Struct.new('Flags', :type_checked, :type_valid,
-                     :charset_checked, :charset_valid,
-                     :encoding_checked, :encoding_valid,
-                     :syntax_checked, :syntax_valid, :cache) do |name|
+  Flags = Struct.new(
+    'Flags',
+    :type_checked, :type_valid, :charset_checked, :charset_valid,
+    :encoding_checked, :encoding_valid, :syntax_checked, :syntax_valid, :cache
+  ) do |name|
 
-    # Initialize a vector of flags
+    # Initialize a struct of flags from arbitrary input
     #
-    # @param integer [Integer, Array]
-    # @param length  [nil, Integer]
+    # @param arg [Store::Digest::Object::Flags, Integer, #to_h, #to_a]
     #
-    # @return [Array]
+    # @return [Store::Digest::Object::Flags]
     #
-    def self.from integer, length: self.members.size
-      if integer.is_a? Integer
-        tmp = integer.digits(2).reverse
-      elsif integer.respond_to? :to_a
-        tmp = integer.to_a
+    def self.from arg
+      # get the length since we use it in a few places
+      len = self.members.size
+
+      if arg.is_a? Integer
+        tmp = arg.digits(2).first(len)
+      elsif arg.is_a? self
+        # noop
+        return arg
+      elsif arg.is_a? Hash
+        tmp = arg.slice(*self.members).transform_values do |v|
+          !!(v && v != 0)
+        end
+        return self.[](**tmp)
+      elsif arg.respond_to? :to_a
+        tmp = arg.to_a.first(len)
       else
         raise ArgumentError, 'Input must be an integer or array'
       end
 
-      tmp.map! { |b| b && b != 0 }
+      # append these
+      tmp += [false] * (len - tmp.size) if tmp.size < len
 
-      if length
-        tmp = tmp.first length
-        tmp = [false] * (length - tmp.length) + tmp
-      end
+      # make sure these are true/false
+      tmp.map! { |b| !!(b && b != 0) }
 
       # we do this because `new` doesn't do this
       self.[](*tmp)
@@ -94,14 +123,14 @@ class Store::Digest::Object
     # @return [Integer]
     #
     def self.to_i array
-      array.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
+      array.to_a.reverse.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
     end
 
     # wish there was a cleaner way to do derive individual instance
     # methods from class methods
     begin
       cm = self.method :to_i
-      define_method(:to_i) { cm.call self }
+      define_method(:to_i) { cm.call self.to_a }
     end
   end
 
@@ -158,7 +187,7 @@ class Store::Digest::Object
 
   MANDATORY = %i[size ctime mtime ptime]
   OPTIONAL  = %i[dtime type language charset encoding]
-  FLAG      = %i[content-type charset content-encoding syntax cache].freeze
+  FLAG      = %i[content-type charset content-encoding syntax].freeze
   STATE     = %i[unverified invalid recheck valid].freeze
 
   def coerce_time t, k
@@ -203,7 +232,9 @@ class Store::Digest::Object
   # @param flags [Integer] validation state flags
   # @param strict [true, false] raise an error on bad input
   # @param fresh [true, false] assert "freshness" of object vis-a-vis the store
+  #
   # @return [Store::Digest::Object] the object in question
+  #
   def initialize content = nil, digests: {}, size: 0,
       type: 'application/octet-stream', charset: nil, language: nil,
       encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil,
@@ -266,19 +297,17 @@ class Store::Digest::Object
       instance_variable_set "@#{k}", v
     end
 
-    # size and flags should be non-negative integers
-    %i[size flags].each do |k|
-      x = b.local_variable_get k
-      v = case x
-          when nil then 0
-          when Integer
-            raise ArgumentError, "#{k} must be non-negative" if x < 0
-            x
-          else
-            raise ArgumentError, "#{k} must be nil or an Integer"
-          end
-      instance_variable_set "@#{k}", v
-    end
+    # set the flags
+    @flags = Flags.from(flags || 0)
+
+    @size = case size
+            when nil then 0
+            when Numeric
+              raise ArgumentError, 'size must be non-negative' if size < 0
+              size.to_i
+            else
+              raise ArgumentError, 'size must be nil or Numeric'
+            end
 
     # the following can be strings or symbols:
     TOKENS.keys.each do |k|
@@ -329,7 +358,7 @@ class Store::Digest::Object
 
     # sane default for mtime
     @mtime = coerce_time(mtime || @mtime ||
-      (content.respond_to?(:mtime) ? content.mtime : Time.now), :mtime)
+      (content.respond_to?(:mtime) ? content.mtime : Time.now(in: ?Z)), :mtime)
 
     # eh, *some* code reuse
     b = binding
@@ -376,15 +405,21 @@ class Store::Digest::Object
       [k, URI::NI.compute(v, algorithm: k).freeze]
     end.to_h.freeze
 
+    # ensure there is the most generic of possible types
+    type ||= 'application/octet-stream'.freeze
+
     # obtain the sampled content type
     ts = MimeMagic.by_magic(sample) || MimeMagic.default_type(sample)
     if content.respond_to? :path
       # may as well use the path if it's available and more specific
       ps = MimeMagic.by_path(content.path.to_s)
       # XXX the need to do ts.to_s is a bug in mimemagic
-      ts = ps if ps and ps.child_of?(ts.to_s)
+      ts = ps if ps and ps.descendant_of?(ts.to_s)
     end
-    @type = !type || ts.child_of?(type) ? ts.to_s : type
+
+    # set the type to ts if it is more specific
+    @type = ts.descendant_of?(type.to_s) ? ts.to_s.freeze :
+      type.to_s.dup.downcase.freeze
 
     self
   end
@@ -392,9 +427,14 @@ class Store::Digest::Object
   # Determine (or set) whether the object is "fresh", i.e. whether it
   # is new (or restored), or had been previously been in the store.
   #
-  # @param state [true, false]
-  def fresh? state = nil
-    state.nil? ? @fresh : @fresh = !!state
+  # @return [true, false]
+  #
+  def fresh?
+    !!@fresh
+  end
+  
+  def fresh= state
+    @fresh = !!state
   end
 
   # Return the algorithms used in the object.
@@ -440,53 +480,63 @@ class Store::Digest::Object
     !@digests.empty?
   end
 
+  # Returns whether the object is cache.
+  #
+  # @return [false, true]
+  #
+  def cache?
+    !!@flags.cache
+  end
+
+  # XXX i'm keeping these as-is for now
+
   # Returns true if the content type has been checked.
   # @return [false, true]
   def type_checked?
-    0 != @flags & TYPE_CHECKED
+    0 != @flags.to_i & TYPE_CHECKED
   end
 
   # Returns true if the content type has been checked _and_ is valid.
   # @return [false, true]
   def type_valid?
-    0 != @flags & (TYPE_CHECKED|TYPE_VALID)
+    0 != @flags.to_i & (TYPE_CHECKED|TYPE_VALID)
   end
 
   # Returns true if the character set has been checked.
   # @return [false, true]
   def charset_checked?
-    0 != @flags & CHARSET_CHECKED
+    0 != @flags.to_i & CHARSET_CHECKED
   end
 
   # Returns true if the character set has been checked _and_ is valid.
   # @return [false, true]
   def charset_valid?
-    0 != @flags & (CHARSET_CHECKED|CHARSET_VALID)
+    0 != @flags.to_i & (CHARSET_CHECKED|CHARSET_VALID)
   end
 
   # Returns true if the content encoding (e.g. gzip, deflate) has
   # been checked.
   # @return [false, true]
   def encoding_checked?
-    0 != @flags & ENCODING_CHECKED
+    0 != @flags.to_i & ENCODING_CHECKED
   end
 
   # Returns true if the content encoding has been checked _and_ is valid.
   # @return [false, true]
   def encoding_valid?
-    0 != @flags & (ENCODING_CHECKED|ENCODING_VALID)
+    0 != @flags.to_i & (ENCODING_CHECKED|ENCODING_VALID)
   end
 
   # Returns true if the blob's syntax has been checked.
   # @return [false, true]
   def syntax_checked?
-    0 != @flags & SYNTAX_CHECKED
+    0 != @flags.to_i & SYNTAX_CHECKED
   end
 
   # Returns true if the blob's syntax has been checked _and_ is valid.
   # @return [false, true]
   def syntax_valid?
-    0 != @flags & (SYNTAX_CHECKED|SYNTAX_VALID)
+    0 != @flags.to_i & (SYNTAX_CHECKED|SYNTAX_VALID)
   end
 
   %i[ctime mtime ptime dtime].each do |k|
@@ -543,7 +593,7 @@ class Store::Digest::Object
     # now the validation statuses
     out << "Validation:\n"
     FLAG.each_index do |i|
-      x = flags >> (3 - i) & 3
+      x = flags.to_i >> (3 - i) & 3
       out << ("  %-16s: %s\n" % [FLAG[i], STATE[x]])
     end
 

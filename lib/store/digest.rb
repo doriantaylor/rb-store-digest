@@ -102,7 +102,8 @@ class Store::Digest
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
       mtime: nil, strict: true, preserve: false
     return unless obj
-    #transaction do # |txn|
+
+    transaction do # |txn|
       obj = coerce_object obj, type: type, charset: charset,
         language: language, encoding: encoding, mtime: mtime, strict: strict
       raise ArgumentError, 'We need something to store!' unless obj.content?
@@ -124,6 +125,7 @@ class Store::Digest
 
       # set_meta will return nil if there is no difference in what is set
       if h = set_meta(obj, preserve: preserve)
+        # warn h.inspect
         # replace the object
 
         content = obj.content
@@ -138,30 +140,34 @@ class Store::Digest
 
         # now settle the blob into storage
         settle_blob obj[primary].digest, tmp, mtime: obj.mtime
-        #txn.commit
       else
         tmp.close
         tmp.unlink
 
+        # warn "got here lolol"
+
         # eh just do this
         obj = get obj
-        obj.fresh? false # object is not fresh since we already have it
+        obj.fresh = false # object is not fresh since we already have it
       end
 
       obj
-    #end
+    end
   end
 
   # Retrieve an object from the store.
-  # @param obj [URI]
+  #
+  # @param obj [URI, Store::Digest::Object]
+  #
+  # @return [Store::Digest::Object, nil]
   def get obj
-    body = -> do
+    transaction readonly: true do
       obj = coerce_object obj
-      h = get_meta(obj) or return # bail if this does not exist
-      b = get_blob h[:digests][primary].digest # may be nil
-      Store::Digest::Object.new b, **h
+      if h = get_meta(obj) # bail if this does not exist
+        b = get_blob h[:digests][primary].digest # may be nil
+        Store::Digest::Object.new b, **h
+      end
     end
-    transaction(&body)
   end
 
   # Remove an object from the store, optionally "forgetting" it ever existed.

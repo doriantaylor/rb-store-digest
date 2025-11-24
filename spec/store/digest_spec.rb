@@ -27,7 +27,7 @@ RSpec.describe Store::Digest do
 
   context 'initializing the store' do
     # store should initialize
-    it 'should initialize' do 
+    it 'should initialize' do
       expect(subject).to be_a Store::Digest
     end
 
@@ -86,7 +86,7 @@ RSpec.describe Store::Digest do
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
       obj = subject.add 'hurrdurr'
-      expect(obj.fresh?).to be true
+      expect(obj.fresh?).to be_truthy
     end
 
     it 'should set obj.fresh? to true for a previously-deleted object' do
@@ -95,22 +95,28 @@ RSpec.describe Store::Digest do
       obj  = subject.add 'lol'
       dead = subject.remove 'lol'
       obj  = subject.add 'lol'
-      expect(obj.fresh?).to be true
+      expect(obj.fresh?).to be_truthy
     end
 
     it 'should set obj.fresh? to true on a substantive metadata change' do
       # store.add should set obj.fresh? to true if any metadata has
       #   been updated
       obj = subject.add 'lol', type: 'application/x-derp'
-      expect(obj.fresh?).to be true
+      expect(obj.fresh?).to be_truthy
+      wut = subject.get obj
+      expect(wut).to be_a(Store::Digest::Object)
     end
 
     it 'should set obj.fresh? to false for an existing object' do
       # store.add should set obj.fresh? to false if the object was
       # already present
       # (lol god now we are repeating this mimetype to make the tests pass)
-      obj = subject.add 'lol', type: 'application/x-derp'
-      expect(obj.fresh?).to be false
+      old = subject.get URI::NI.compute('lol')
+      expect(old).to be_a(Store::Digest::Object)
+      expect(old.type).to eql('application/x-derp')
+
+      obj = subject.add old, type: 'application/x-derp'
+      expect(obj.fresh?).to be_falsy
     end
 
     it 'should set obj.fresh? to false on preserve: true' do
@@ -119,7 +125,7 @@ RSpec.describe Store::Digest do
       # (store.add should set obj.fresh? to true otherwise)
       obj = subject.add 'lol', type: 'application/x-derp',
         mtime: Time.now + 10, preserve: true
-      expect(obj.fresh?).to be false
+      expect(obj.fresh?).to be_falsy
     end
   end
 
