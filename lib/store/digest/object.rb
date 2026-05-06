@@ -1,5 +1,6 @@
 require 'store/digest/version'
 
+require 'forwardable'
 require 'uri'
 require 'uri/ni'
 require 'mimemagic'
@@ -70,6 +71,23 @@ end
 # Store entry object class.
 #
 class Store::Digest::Object
+
+  # Proxy IO instance that has a backreference to the store object.
+  #
+  class IOWrapper
+    extend Forwardable
+
+    def initialize object, io
+      @object = object
+      @io     = io
+    end
+
+    attr_reader :object
+
+    # any others??
+    def_delegators :@io, :gets, :read, :each, :seek, :pos, :rewind
+
+  end
 
   # These is a struct for the bank of flags, with a couple of extra
   # methods for parsing
@@ -432,7 +450,7 @@ class Store::Digest::Object
   def fresh?
     !!@fresh
   end
-  
+
   def fresh= state
     @fresh = !!state
   end
@@ -455,9 +473,12 @@ class Store::Digest::Object
   alias_method :"[]", :digest
 
   # Returns the content stored in the object.
-  # @return [IO]
+  #
+  # @return [#read]
+  #
   def content
-    @content.is_a?(Proc) ? @content.call : @content
+    io = @content.is_a?(Proc) ? @content.call : @content
+    io = io ? IOWrapper.new(self, io) : io
   end
 
   # Determines if there is content embedded in the object.

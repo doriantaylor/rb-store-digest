@@ -2,7 +2,7 @@ RSpec.describe Store::Digest::Object do
   context 'creating an object' do
     obj = Store::Digest::Object.new
 
-    it 'initializes with empty content' do 
+    it 'initializes with empty content' do
       # object initializes blank
       expect(obj.content).to be_nil
     end
@@ -28,6 +28,11 @@ RSpec.describe Store::Digest::Object do
       obj = Store::Digest::Object.scan 'string lol'
       expect(obj.size).to be 10
       expect(obj.type).to eql 'text/plain'
+
+      # tucking the io wrapper test here for now
+      expect(obj.content).to be_a(Store::Digest::Object::IOWrapper)
+      expect(obj.content.read).to eql 'string lol'
+      expect(obj.content.object).to be_a(Store::Digest::Object)
     end
 
     it 'can scan a File' do
@@ -55,7 +60,7 @@ RSpec.describe Store::Digest::Object do
 
       # uhh now wondering if this makes any sense
     end
-    
+
     it 'can scan a Proc (that returns an IO)' do
     # object can scan a Proc (that returns an IO)
       proc = Proc.new { StringIO.new 'lol' }
