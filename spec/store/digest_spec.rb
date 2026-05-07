@@ -56,14 +56,14 @@ RSpec.describe Store::Digest do
   end
 
   context 'poke at Driver::LMDB' do
-  # store should complain if you don't tell it where to set up shop *
-  # store should create its root directory if it doesn't exist *
-  # store should complain if creating a directory fails *
-  # store should complain if its root is anything but an rwx directory *
-  # store should correctly commute its umask to the directory *
-  # store should setgid its directories if the OS supports it *
-  # store should chown its contents to make sure it can be accessed *
-  # store should initialize metadata database, whatever that entails *
+    # store should complain if you don't tell it where to set up shop *
+    # store should create its root directory if it doesn't exist *
+    # store should complain if creating a directory fails *
+    # store should complain if its root is anything but an rwx directory *
+    # store should correctly commute its umask to the directory *
+    # store should setgid its directories if the OS supports it *
+    # store should chown its contents to make sure it can be accessed *
+    # store should initialize metadata database, whatever that entails *
   end
 
 
@@ -127,40 +127,48 @@ RSpec.describe Store::Digest do
         mtime: Time.now - 10, preserve: true
       expect(obj.fresh?).to be_falsy
     end
+
+    it 'should not store until a `lazy_add` until it is read' do
+      obj = subject.lazy_add 'totes potates', type: 'application/x-hurrrr'
+      expect(subject.stats.objects).to eq 3
+      expect(obj.read).to eq 'totes potates'
+      # warn obj.object.digests
+      expect(subject.stats.objects).to eq 4
+    end
   end
 
   context 'retrieving objects' do
-  # store should get a String/IO/File/Pathname/Store::Digest::Object/URI::NI
-  # store.get should scan an S:D:O if it is not scanned (ie, no digest
-  #   URIs), and complain if it can't scan (ie, if there is no content)
-  # store.get should return nil if the object is not in the store
-  # store.get should return a new object if present
+    # store should get a String/IO/File/Pathname/Store::Digest::Object/URI::NI
+    # store.get should scan an S:D:O if it is not scanned (ie, no digest
+    #   URIs), and complain if it can't scan (ie, if there is no content)
+    # store.get should return nil if the object is not in the store
+    # store.get should return a new object if present
 
-  # (Note: It may seem weird to `get` an object you already have, but
-  # the return value is an implicit verification that the store *also*
-  # has it. It is like this mainly for symmetry.)
+    # (Note: It may seem weird to `get` an object you already have, but
+    # the return value is an implicit verification that the store *also*
+    # has it. It is like this mainly for symmetry.)
   end
 
   context 'removing objects' do
-  # store should remove a URI::NI/Store::Digest::Object/String/IO/File/Pathname
-  # store.remove returns the removed object
-  # store.remove should set the object's dtime
-  # store.remove should nuke the blob *
-  # store.remove should nuke the directory tree if empty *
-  # store.remove should increment the deleted count
-  # store.remove should decrement the byte count
-  # store.remove should NOT decrement the object count
-  # store.get should return a removed object (minus content, plus dtime)
+    # store should remove a URI::NI/Store::Digest::Object/String/IO/File/Pathname
+    # store.remove returns the removed object
+    # store.remove should set the object's dtime
+    # store.remove should nuke the blob *
+    # store.remove should nuke the directory tree if empty *
+    # store.remove should increment the deleted count
+    # store.remove should decrement the byte count
+    # store.remove should NOT decrement the object count
+    # store.get should return a removed object (minus content, plus dtime)
   end
 
   context 'forgetting objects' do
-  # store.forget is the same as store.remove obj, forget: true
-  # store.forget should destroy its metadata entirely
-  # store.forget should decrement the object count
-  # store.forget should decrement deleted count if the object was
-  #   previously deleted
-  # store.forget should decrement byte count if the object was NOT
-  #   previously deleted
+    # store.forget is the same as store.remove obj, forget: true
+    # store.forget should destroy its metadata entirely
+    # store.forget should decrement the object count
+    # store.forget should decrement deleted count if the object was
+    #   previously deleted
+    # store.forget should decrement byte count if the object was NOT
+    #   previously deleted
   end
 
   # store.objects/deleted/bytes should always remain accurate, no

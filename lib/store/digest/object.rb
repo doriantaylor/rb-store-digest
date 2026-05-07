@@ -1,6 +1,5 @@
 require 'store/digest/version'
 
-require 'forwardable'
 require 'uri'
 require 'uri/ni'
 require 'mimemagic'
@@ -75,18 +74,55 @@ class Store::Digest::Object
   # Proxy IO instance that has a backreference to the store object.
   #
   class IOWrapper
-    extend Forwardable
 
-    def initialize object, io
-      @object = object
-      @io     = io
+    private
+
+    def ensure_stored
+      unless @object
+        # XXX what about encoding, charset
+        @object = @store.add @io, **@options
+        # XXX lol this wrapper wraps another instance of itself oh well
+        @io = @object.content
+      end
     end
 
-    attr_reader :object
+    public
 
-    # any others??
-    def_delegators :@io, :gets, :read, :each, :seek, :pos, :rewind
+    # Initialize the IO wrapper
+    #
+    # @param object [Store::Digest::Object] backreference to object
+    # @param io [IO] IO-ish thing
+    #
+    def initialize io, object: nil, store: nil, type: nil, charset: nil,
+        language: nil, encoding: nil, mtime: nil, strict: true,
+        preserve: false, cache: nil
 
+      raise ArgumentError, 'store or object but not both' if
+        store && object or !(store || object)
+
+      @io     = io
+      @object = object
+
+      if @store = store
+        @options = {
+          type: type, charset: charset, language: language,
+          encoding: encoding, mtime: mtime, strict: strict,
+          preserve: preserve, cache: cache
+        }
+      end
+    end
+
+    def object
+      ensure_stored
+      @object
+    end
+
+    %i[gets read each seek pos tell rewind close].each do |meth|
+      define_method meth do |*args, **kwargs, &block|
+        ensure_stored
+        @io.send meth, *args, **kwargs, &block
+      end
+    end
   end
 
   # These is a struct for the bank of flags, with a couple of extra
@@ -451,19 +487,30 @@ class Store::Digest::Object
     !!@fresh
   end
 
+  # Override the freshness state
+  #
+  # @param state [false, true]
+  #
+  # @return [void]
+  #
   def fresh= state
     @fresh = !!state
   end
 
   # Return the algorithms used in the object.
+  #
   # @return [Array]
+  #
   def algorithms
     (@digests || {}).keys.sort
   end
 
   # Return a particular digest. Returns nil if there is no match.
+  #
   # @param symbol [Symbol, #to_s, #to_sym] the digest
+  #
   # @return [Symbol, nil]
+  #
   def digest symbol
     raise ArgumentError, "This method takes a symbol" unless
       symbol.respond_to? :to_sym
@@ -478,17 +525,21 @@ class Store::Digest::Object
   #
   def content
     io = @content.is_a?(Proc) ? @content.call : @content
-    io = io ? IOWrapper.new(self, io) : io
+    io ? IOWrapper.new(io, object: self) : io
   end
 
   # Determines if there is content embedded in the object.
+  #
   # @return [false, true]
+  #
   def content?
     !!@content
   end
 
   # Returns the type and charset, suitable for an HTTP header.
+  #
   # @return [String]
+  #
   def type_charset
     out = type.to_s
     out += ";charset=#{charset}" if charset
@@ -496,7 +547,9 @@ class Store::Digest::Object
   end
 
   # Determines if the object has been scanned.
+  #
   # @return [false, true]
+  #
   def scanned?
     !@digests.empty?
   end
@@ -509,53 +562,79 @@ class Store::Digest::Object
     !!@flags.cache
   end
 
+  # Assigns the cache status.
+  #
+  # @param value [false, true] anything falsy/truthy
+  #
+  # @return [void]
+  #
+  def cache= value
+    @flags.cache = !!value
+  end
+
   # XXX i'm keeping these as-is for now
 
   # Returns true if the content type has been checked.
+  #
   # @return [false, true]
+  #
   def type_checked?
     0 != @flags.to_i & TYPE_CHECKED
   end
 
   # Returns true if the content type has been checked _and_ is valid.
+  #
   # @return [false, true]
+  #
   def type_valid?
     0 != @flags.to_i & (TYPE_CHECKED|TYPE_VALID)
   end
 
   # Returns true if the character set has been checked.
+  #
   # @return [false, true]
+  #
   def charset_checked?
     0 != @flags.to_i & CHARSET_CHECKED
   end
 
   # Returns true if the character set has been checked _and_ is valid.
+  #
   # @return [false, true]
+  #
   def charset_valid?
     0 != @flags.to_i & (CHARSET_CHECKED|CHARSET_VALID)
   end
 
   # Returns true if the content encoding (e.g. gzip, deflate) has
   # been checked.
+  #
   # @return [false, true]
+  #
   def encoding_checked?
     0 != @flags.to_i & ENCODING_CHECKED
   end
 
   # Returns true if the content encoding has been checked _and_ is valid.
+  #
   # @return [false, true]
+  #
   def encoding_valid?
     0 != @flags.to_i & (ENCODING_CHECKED|ENCODING_VALID)
   end
 
   # Returns true if the blob's syntax has been checked.
+  #
   # @return [false, true]
+  #
   def syntax_checked?
     0 != @flags.to_i & SYNTAX_CHECKED
   end
 
   # Returns true if the blob's syntax has been checked _and_ is valid.
+  #
   # @return [false, true]
+  #
   def syntax_valid?
     0 != @flags.to_i & (SYNTAX_CHECKED|SYNTAX_VALID)
   end
@@ -579,14 +658,18 @@ class Store::Digest::Object
   # Just a plain old predicate to determine whether the blob has been
   # deleted from the store (but implicitly the metadata record
   # remains).
+  #
   # @return [false, true]
+  #
   def deleted?
     !!@dtime
   end
 
   # Return the object as a hash. Omits the content by default.
+  #
   # @param content [false, true] include the content if true
   # @return [Hash] the object as a hash
+  #
   def to_h content: false
     main = %i[content digests]
     main.shift unless content
@@ -596,6 +679,9 @@ class Store::Digest::Object
   end
 
   # Outputs a human-readable string representation of the object.
+  #
+  # @return [String] said representation
+  #
   def to_s
     out = "#{self.class}\n  Digests:\n"
 

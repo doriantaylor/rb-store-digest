@@ -9,7 +9,6 @@ module Store::Digest::Meta::LMDB
   include Store::Digest::Meta
   include Store::Digest::Trait::RootDir
 
-
   private
 
   PRIMARY = :"sha-256"
@@ -21,37 +20,10 @@ module Store::Digest::Meta::LMDB
     "sha-512": 64,
   }.freeze
 
-  FORMAT = 'Q>NNNNCZ*Z*Z*Z*'.freeze
-  RECORD = %i[
-    size ctime mtime ptime dtime flags type language charset encoding].freeze
-  INTS   = %i[
-    size ctime mtime ptime dtime flags].map { |k| [k, :to_i] }.to_h.freeze
-  PACK   = {
-    # control records
-    objects:  'Q>',
-    deleted:  'Q>',
-    bytes:    'Q>',
-    # object records
-    size:     'Q>',
-    ctime:    ?N, # - also used in control
-    mtime:    ?N, # - ditto
-    ptime:    ?N,
-    dtime:    ?N,
-    flags:    ?C,
-    type:     'Z*',
-    language: 'Z*',
-    charset:  'Z*',
-    encoding: 'Z*',
-  }.transform_values(&:freeze).freeze
-
-  # NOTE these are all internal methods meant to be used inside other
-  # transactions so they do not run in transactions themselves
-
-
   def meta_get_stats
     @lmdb.transaction do
       h = %i[ctime mtime objects deleted bytes].map do |k|
-        [k, @dbs[:control][k.to_s].unpack1(PACK[k])]
+        [k, db_decode(@dbs[:control][k.to_s], k)]
       end.to_h
 
       # fix the times
@@ -179,7 +151,7 @@ module Store::Digest::Meta::LMDB
   def objects
     @lmdb.transaction do
       if ret = @dbs[:control]['objects']
-        ret.unpack1 'Q>' # 64-bit unsigned network-endian integer
+        db_decode ret, :objects
       end
     end
   end
@@ -190,7 +162,7 @@ module Store::Digest::Meta::LMDB
   def deleted
     @lmdb.transaction do
       if ret = @dbs[:control]['deleted']
-        ret.unpack1 'Q>'
+        db_decode ret, :deleted
       end
     end
   end
@@ -201,7 +173,7 @@ module Store::Digest::Meta::LMDB
   def bytes
     @lmdb.transaction do
       if ret = @dbs[:control]['bytes']
-        ret.unpack1 'Q>'
+        db_decode ret, :bytes
       end
     end
   end
@@ -316,7 +288,41 @@ module Store::Digest::Meta::LMDB
   # This is the version zero (original) database layout.
   module V0
 
+    FORMAT = 'Q>NNNNCZ*Z*Z*Z*'.freeze
+    RECORD = %i[
+                size ctime mtime ptime dtime flags type language charset encoding].freeze
+    INTS   = %i[
+                size ctime mtime ptime dtime flags].map { |k| [k, :to_i] }.to_h.freeze
+    PACK   = {
+      # control records
+      objects:  'Q>',
+      deleted:  'Q>',
+      bytes:    'Q>',
+      # object records
+      size:     'Q>',
+      ctime:    ?N, # - also used in control
+      mtime:    ?N, # - ditto
+      ptime:    ?N,
+      dtime:    ?N,
+      flags:    ?C,
+      type:     'Z*',
+      language: 'Z*',
+      charset:  'Z*',
+      encoding: 'Z*',
+    }.transform_values(&:freeze).freeze
+
+    # NOTE these are all internal methods meant to be used inside other
+    # transactions so they do not run in transactions themselves
+
     private
+
+    def db_decode raw, type
+      raw.unpack1 PACK[type]
+    end
+
+    def db_encode value, type
+      [value].pack PACK[type]
+    end
 
     def setup_dbs
 
@@ -369,6 +375,7 @@ module Store::Digest::Meta::LMDB
       raise ArgumentError, "Invalid control key #{key}" unless
         %[ctime mtime objects deleted bytes].include? key
       if val = @dbs[:control][key.to_s]
+
         val.unpack1 PACK[key]
       end
     end
@@ -781,6 +788,8 @@ module Store::Digest::Meta::LMDB
     # @return [String] the raw value for the database
     #
     def db_encode value, type = value.class
+      type = CONTROL[type] || RECORD[type] if type.is_a? Symbol
+
       pack, encode, _ = COERCE[type]
       raise ArgumentError, "Unsupported type #{type}" unless pack
 
@@ -795,6 +804,7 @@ module Store::Digest::Meta::LMDB
     # @return [Object] whatever `type` object was intended
     #
     def db_decode raw, type
+      type = CONTROL[type] || RECORD[type] if type.is_a? Symbol
       pack, _, decode = COERCE[type]
       raise ArgumentError, "Unsupported type #{type}" unless pack
 

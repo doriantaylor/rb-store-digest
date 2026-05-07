@@ -57,7 +57,7 @@ module Store::Digest::Blob::FileSystem
   # Return an open tempfile in the designated temp directory
   # @return [Tempfile]
   def temp_blob
-    Tempfile.new 'blob', tmp
+    Tempfile.new 'blob', tmp, encoding: Encoding::BINARY
   end
 
   # Settle a blob from its temporary location to its permanent location.

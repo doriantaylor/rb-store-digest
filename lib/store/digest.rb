@@ -96,16 +96,18 @@ class Store::Digest
   # @param mtime [Time] the modification time, if not "now"
   # @param strict [true, false] strict checking on metadata input
   # @param preserve [false, true] preserve existing modification time
+  # @param cache [false, true, Time] whether the object should be
+  #  treated as cache, and/or when to evict it
   #
   # @return [Store::Digest::Object] The (potentially pre-existing) entry
   #
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
-      mtime: nil, strict: true, preserve: false
+      mtime: nil, strict: true, preserve: false, cache: nil
     return unless obj
 
     transaction do # |txn|
-      obj = coerce_object obj, type: type, charset: charset,
-        language: language, encoding: encoding, mtime: mtime, strict: strict
+      obj = coerce_object obj, type: type, charset: charset, language: language,
+        encoding: encoding, mtime: mtime, strict: strict
       raise ArgumentError, 'We need something to store!' unless obj.content?
 
       # this method is helicoptered in
@@ -153,6 +155,29 @@ class Store::Digest
 
       obj
     end
+  end
+
+  # Returns a readable, rewindable object that will add the argument
+  # to the store only when read.
+  #
+  # @param readable [IO,File,Pathname,String] the thing to read
+  # @param type [String] the content type
+  # @param charset [String] the character set, if applicable
+  # @param language [String] the language, if applicable
+  # @param encoding [String] the encoding (eg compression) if applicable
+  # @param mtime [Time] the modification time, if not "now"
+  # @param strict [true, false] strict checking on metadata input
+  # @param preserve [false, true] preserve existing modification time
+  # @param cache [false, true, Time] whether the object should be
+  #  treated as cache, and/or when to evict it
+  #
+  # @return [Store::Digest::Object::IOWrapper] the IO wrapper
+  #
+  def lazy_add readable, type: nil, charset: nil, language: nil, encoding: nil,
+      mtime: nil, strict: true, preserve: false, cache: false
+    Store::Digest::Object::IOWrapper.new readable, store: self,
+      type: type, charset: charset, language: language, encoding: encoding,
+      mtime: mtime, strict: strict, preserve: preserve, cache: cache
   end
 
   # Retrieve an object from the store.
