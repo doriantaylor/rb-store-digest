@@ -67,6 +67,8 @@ class MimeMagic
   end
 end
 
+
+
 # Store entry object class.
 #
 class Store::Digest::Object
@@ -390,7 +392,7 @@ class Store::Digest::Object
       blocksize: blocksize, strict: strict, fresh: fresh, &block
   end
 
-  def scan content = nil, digests: URI::NI.algorithms, mtime: nil,
+  def scan content = nil, into = nil, digests: URI::NI.algorithms, mtime: nil,
       type: nil, charset: nil, language: nil, encoding: nil,
       blocksize: BLOCKSIZE, strict: true, fresh: nil, &block
     # update freshness if there is something to update
@@ -401,7 +403,14 @@ class Store::Digest::Object
               when IO, StringIO then content
               when String       then StringIO.new content
               when Pathname     then content.open('rb')
-              when Proc         then content.call
+              when Proc
+                if content.arity == 0
+                  content.call
+                else
+                  x = StringIO.new
+                  content.call x
+                  x
+                end
               when -> x { %i[read seek pos].all? { |m| x.respond_to? m } }
                 content
               else
@@ -447,7 +456,7 @@ class Store::Digest::Object
       @size += buf.size
       sample << buf if sample.pos < SAMPLE
       digests.values.each { |ctx| ctx << buf }
-      block.call buf if block_given?
+      block.call buf if block
     end
 
     # seek the content back to the front and store it

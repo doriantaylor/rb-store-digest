@@ -1,4 +1,27 @@
 #+STARTUP: showall indent hidestars
+* TODO 2026-05-26 beef up scanning
+- *GOAL*: we want to be able to drop one of these objects into a Rack message body — either request or response — and it should JFW
+  - we should be able to take what's already in there and initialize the object with that
+  - the result must be rewindable
+- [ ] ~Store::Digest::Object~
+  - [ ] initialize with ~Store::Digest~ instance
+  - [ ] uhh why don't we just stick the methods in this instead of having a separate class
+- [ ] ~Store::Digest::ReadProxy~
+  - [ ] [[https://github.com/rack/rack/blob/main/SPEC.rdoc#the-body][ingests all kinds of objects]]
+    - [ ] strings
+    - [ ] arrays of strings / enumerators that yield strings
+    - [ ] [[https://github.com/rack/rack/blob/main/SPEC.rdoc#the-input-stream][things that quack like]] ~#gets~ ~#read~ ~#close~
+    - [ ] things that respond to ~#call~
+      - [ ] that returns one of the above
+      - [ ] that takes a write handle as its first (only?) argument
+  - [ ] exposes a minimal ~#each~ ~#read~ ~#gets~ ~#rewind~ ~#close~ interface
+  - [ ] also exposes an ~#object~ for associated ~Store::Digest::Object~
+  - [ ] will not scan input until first call ato ~#each~, ~#read~, or ~#object~
+    - [ ] may not scan at all if passed in an object which is already scanned
+  - [ ] scanning the input adds it to the store if present and replaces the input with a rewindable file handle
+    - [ ] if there is no backreference to the store, just use a temporary file
+- [ ] ~Store::Digest#wrap~ returns a ~Store::Digest::ReadProxy~
+- [ ] ~Store::Digest#add~ maybe itself just wraps ~#wrap.object~?
 * TODO upgrade metadata format
 - [ ] get rid of the idea of a 'primary' digest algorithm
   - [ ] change the main record to being keyed by integers and contain all hashes

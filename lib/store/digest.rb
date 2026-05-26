@@ -116,7 +116,7 @@ class Store::Digest
       # XXX this is stupid; figure out a better way to do this
 
       # get our digests
-      obj.scan(digests: algorithms, blocksize: 2**20, strict: strict,
+      obj.scan(digests: algorithms, blocksize: 2**16, strict: strict,
         type: type, charset: charset, language: language,
         encoding: encoding, mtime: mtime) do |buf|
         tmp << buf
