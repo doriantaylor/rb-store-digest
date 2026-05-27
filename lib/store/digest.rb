@@ -2,6 +2,9 @@ require 'store/digest/version'
 require 'store/digest/driver'
 require 'store/digest/object'
 
+# This is a general-purpose content-addressable store that interfaces
+# via RFC6920 addresses.
+#
 class Store::Digest
   private
 

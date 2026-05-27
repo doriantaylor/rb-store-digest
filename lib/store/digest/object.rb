@@ -131,62 +131,63 @@ class Store::Digest::Object
   # methods for parsing
   #
   Flags = Struct.new(
-    'Flags',
-    :type_checked, :type_valid, :charset_checked, :charset_valid,
+    'Flags', :type_checked, :type_valid, :charset_checked, :charset_valid,
     :encoding_checked, :encoding_valid, :syntax_checked, :syntax_valid, :cache
-  ) do |name|
+  ) do |cls|
 
-    # Initialize a struct of flags from arbitrary input
-    #
-    # @param arg [Store::Digest::Object::Flags, Integer, #to_h, #to_a]
-    #
-    # @return [Store::Digest::Object::Flags]
-    #
-    def self.from arg
-      # get the length since we use it in a few places
-      len = self.members.size
+    class << cls
+      # Initialize a struct of flags from arbitrary input
+      #
+      # @param arg [Store::Digest::Object::Flags, Integer, #to_h, #to_a]
+      #
+      # @return [Store::Digest::Object::Flags]
+      #
+      def from arg
+        # get the length since we use it in a few places
+        len = self.members.size
 
-      if arg.is_a? Integer
-        tmp = arg.digits(2).first(len)
-      elsif arg.is_a? self
-        # noop
-        return arg
-      elsif arg.is_a? Hash
-        tmp = arg.slice(*self.members).transform_values do |v|
-          !!(v && v != 0)
+        if arg.is_a? Integer
+          tmp = arg.digits(2).first(len)
+        elsif arg.is_a? self
+          # noop
+          return arg
+        elsif arg.is_a? Hash
+          tmp = arg.slice(*self.members).transform_values do |v|
+            !!(v && v != 0)
+          end
+          return self.[](**tmp)
+        elsif arg.respond_to? :to_a
+          tmp = arg.to_a.first(len)
+        else
+          raise ArgumentError, 'Input must be an integer or array'
         end
-        return self.[](**tmp)
-      elsif arg.respond_to? :to_a
-        tmp = arg.to_a.first(len)
-      else
-        raise ArgumentError, 'Input must be an integer or array'
+
+        # append these
+        tmp += [false] * (len - tmp.size) if tmp.size < len
+
+        # make sure these are true/false
+        tmp.map! { |b| !!(b && b != 0) }
+
+        # we do this because `new` doesn't do this
+        self.[](*tmp)
       end
 
-      # append these
-      tmp += [false] * (len - tmp.size) if tmp.size < len
-
-      # make sure these are true/false
-      tmp.map! { |b| !!(b && b != 0) }
-
-      # we do this because `new` doesn't do this
-      self.[](*tmp)
-    end
-
-    # Turn an arbitrary {Array} back into an {Integer}.
-    #
-    # @param array [Array]
-    #
-    # @return [Integer]
-    #
-    def self.to_i array
-      array.to_a.reverse.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
+      # Turn an arbitrary {Array} back into an {Integer}.
+      #
+      # @param array [Array]
+      #
+      # @return [Integer]
+      #
+      def to_i array
+        array.to_a.reverse.reduce(0) { |acc, b| (acc << 1) | (b ? 1 : 0) }
+      end
     end
 
     # wish there was a cleaner way to do derive individual instance
     # methods from class methods
     begin
-      cm = self.method :to_i
-      define_method(:to_i) { cm.call self.to_a }
+      cm = singleton_method :to_i
+      define_method(:to_i) { cm.call to_a }
     end
   end
 
@@ -275,6 +276,7 @@ class Store::Digest::Object
   # @note use {.scan} or {#scan} to populate
   #
   # @param content [IO, String, Proc, File, Pathname, ...] some content
+  # @param store [Store::Digest] the associated store, if present
   # @param digests [Hash] the digests ascribed to the content
   # @param size [Integer] assert the object's size
   # @param type [String] assert the object's MIME type
@@ -291,7 +293,7 @@ class Store::Digest::Object
   #
   # @return [Store::Digest::Object] the object in question
   #
-  def initialize content = nil, digests: {}, size: 0,
+  def initialize content = nil, store: nil, digests: {}, size: 0,
       type: 'application/octet-stream', charset: nil, language: nil,
       encoding: nil, ctime: nil, mtime: nil, ptime: nil, dtime: nil,
       flags: 0, strict: true, fresh: false
@@ -484,6 +486,65 @@ class Store::Digest::Object
     @type = ts.descendant_of?(type.to_s) ? ts.to_s.freeze :
       type.to_s.dup.downcase.freeze
 
+    self
+  end
+
+  # Iterate over the blob contents.
+  #
+  # @yieldparam chunk [String] the chunk of blob
+  #
+  # @return [self]
+  #
+  def each &block
+    while buf = read BLOCKSIZE
+      block.call buf
+    end
+
+    self
+  end
+
+  # Emulate {IO#read}.
+  #
+  # @param length [Integer] the number of bytes to read
+  #
+  # @return [String, nil] up to `length` bytes or `nil` on EOF
+  #
+  def read length
+    # the first read kicks off the proxy
+  end
+
+  # Emulate {IO#gets}.
+  #
+  # @return [String] the next character
+  #
+  def gets
+    read 1
+  end
+
+  # Emulate {IO#rewind}.
+  #
+  # @return [0] always zero
+  #
+  def rewind
+    # if we hit this and we haven't switched out 
+    0
+  end
+
+  # No-op of {IO#open}.
+  #
+  # @return [self]
+  #
+  def open
+    rewind
+    self
+  end
+
+  # No-op of {IO#close}.
+  #
+  # @return [self]
+  #
+  def close
+    rewind
     self
   end
 
