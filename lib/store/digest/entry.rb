@@ -517,8 +517,8 @@ class Store::Digest::Entry
   #
   # @return [String] the next character
   #
-  def gets
-    read 1
+  def gets sep = $/, chomp = false
+    # 
   end
 
   # Emulate {IO#rewind}.
