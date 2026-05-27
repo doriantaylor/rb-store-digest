@@ -3,26 +3,33 @@
 - *GOAL*: We want to be able to drop one of these objects into a Rack message body — either request or response — and it should JFW.
   - We should be able to take what's already in there and initialize the object with that.
   - The result must be rewindable.
-- [ ] ~Store::Digest::Object~
-  - [ ] rename to ~Store::Digest::Entry~
-    - [ ] add a ~Store::Digest::Object~ constant for the time being
+- [-] ~Store::Digest::Object~ changes
+  - [X] rename to ~Store::Digest::Entry~
+    - [X] add a ~Store::Digest::Object~ constant for the time being
   - [ ] optionally initialize with ~Store::Digest~ instance
-  - [ ] [[https://github.com/rack/rack/blob/main/SPEC.rdoc#the-body][ingests all kinds of objects]]
+  - [ ] [[https://github.com/rack/rack/blob/main/SPEC.rdoc#the-body][ingest all kinds of objects]] (via ~Store::Digest::ReadWrapper~)
     - [ ] strings
     - [ ] arrays of strings / enumerators that yield strings / ~#each~
     - [ ] [[https://github.com/rack/rack/blob/main/SPEC.rdoc#the-input-stream][things that quack like]] ~#gets~ ~#read~ ~#close~
     - [ ] things that respond to ~#call~
       - [ ] that returns one of the above
       - [ ] that takes a write handle as its first (only?) argument
+  - [ ] move ~#scan~ procedure to a class method so ~Store::Digest~ can use it
   - [ ] absorb ~Store::Digest::Object::IOWrapper~
-    - [ ] exposes a minimal ~#each~ ~#read~ ~#gets~ ~#rewind~ ~#close~ interface
+    - [ ] expose a minimal ~#each~ ~#read~ ~#gets~ ~#rewind~ ~#close~ interface
     - [ ] ~#content~ becomes a no-op
-  - [ ] will not scan input until first call ato ~#each~, ~#read~, or ~#object~
+  - [ ] do not scan input until an attempt to access its contents
+    - [ ] first call to ~#each~, ~#read~, or ~#object~
+    - [ ] first call to the digest hash or any of the dependent metadata
     - [ ] may not scan at all if passed in an object which is already scanned
   - [ ] scanning the input adds it to the store if present and replaces the input with a rewindable file handle
     - [ ] if there is no backreference to the store, just use a temporary file
-- [ ] overhaul ~Store::Digest#add~
-- [ ] overhaul ~Store::Digest#get~
+  - [ ] if hashes are already supplied in the constructor then rescanning is a verification and should blow up if *any* of the supplied hashes don't match
+- [ ] ~Store::Digest~
+  - [ ] add something like a ~#raw_scan~ method that will take the entry's readable object and return a ~Hash~ of metadata plus a lambda that returns a rewindable file handle
+  - [ ] overhaul ~#add~
+  - [ ] overhaul ~#get~
+  - [ ] nuke ~#lazy_add~; it is no longer necessary
 * TODO upgrade metadata format
 - [ ] get rid of the idea of a 'primary' digest algorithm
   - [ ] change the main record to being keyed by integers and contain all hashes
