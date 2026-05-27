@@ -1,6 +1,6 @@
 require 'store/digest/version'
 require 'store/digest/driver'
-require 'store/digest/object'
+require 'store/digest/entry'
 
 # This is a general-purpose content-addressable store that interfaces
 # via RFC6920 addresses.
@@ -11,27 +11,27 @@ class Store::Digest
   def coerce_object obj, type: nil, charset: nil,
       language: nil, encoding: nil, mtime: nil, strict: true
     obj = case obj
-          when Store::Digest::Object
+          when Store::Digest::Entry
             obj.dup
           when URI::NI
             # just return the uri
-            Store::Digest::Object.new digests: obj,
+            Store::Digest::Entry.new digests: obj,
               type: type, charset: charset, language: language,
               encoding: encoding, mtime: mtime
           when IO, String, StringIO,
               -> x { %i[seek pos read].all? { |m| x.respond_to? m } }
             # assume this is going to be scanned later
-            Store::Digest::Object.new obj,
+            Store::Digest::Entry.new obj,
               type: type, charset: charset, language: language,
               encoding: encoding, mtime: mtime
           when Pathname
             # actually open pathnames that are handed directly into S::D
-            Store::Digest::Object.new obj.expand_path.open('rb'),
+            Store::Digest::Entry.new obj.expand_path.open('rb'),
               type: type, charset: charset, language: language,
               encoding: encoding, mtime: mtime
           else
             raise ArgumentError,
-              "Can't coerce a #{obj.class} to Store::Digest::Object"
+              "Can't coerce a #{obj.class} to Store::Digest::Entry"
           end
 
     # overwrite the user-mutable metadata
@@ -85,13 +85,13 @@ class Store::Digest
   # Add an object to the store. Takes pretty much anything that makes
   # sense to throw at it.
   #
-  # @note Prefabricated {Store::Digest::Object} instances will be
+  # @note Prefabricated {Store::Digest::Entry} instances will be
   #   rescanned.
   #
   # @note `:preserve` will cause a noop if object metadata is identical
   #   save for `:ctime` and `:mtime` (`:ctime` is always ignored).
   #
-  # @param obj [IO,File,Pathname,String,Store::Digest::Object] the object
+  # @param obj [IO,File,Pathname,String,Store::Digest::Entry] the object
   # @param type [String] the content type
   # @param charset [String] the character set, if applicable
   # @param language [String] the language, if applicable
@@ -102,7 +102,7 @@ class Store::Digest
   # @param cache [false, true, Time] whether the object should be
   #  treated as cache, and/or when to evict it
   #
-  # @return [Store::Digest::Object] The (potentially pre-existing) entry
+  # @return [Store::Digest::Entry] The (potentially pre-existing) entry
   #
   def add obj, type: nil, charset: nil, language: nil, encoding: nil,
       mtime: nil, strict: true, preserve: false, cache: nil
@@ -141,7 +141,7 @@ class Store::Digest
           content = -> { path.open('rb') }
         end
 
-        obj = Store::Digest::Object.new content, fresh: true, **h
+        obj = Store::Digest::Entry.new content, fresh: true, **h
 
         # now settle the blob into storage
         settle_blob obj[primary].digest, tmp, mtime: obj.mtime
@@ -174,26 +174,26 @@ class Store::Digest
   # @param cache [false, true, Time] whether the object should be
   #  treated as cache, and/or when to evict it
   #
-  # @return [Store::Digest::Object::IOWrapper] the IO wrapper
+  # @return [Store::Digest::Entry::IOWrapper] the IO wrapper
   #
   def lazy_add readable, type: nil, charset: nil, language: nil, encoding: nil,
       mtime: nil, strict: true, preserve: false, cache: false
-    Store::Digest::Object::IOWrapper.new readable, store: self,
+    Store::Digest::Entry::IOWrapper.new readable, store: self,
       type: type, charset: charset, language: language, encoding: encoding,
       mtime: mtime, strict: strict, preserve: preserve, cache: cache
   end
 
   # Retrieve an object from the store.
   #
-  # @param obj [URI, Store::Digest::Object]
+  # @param obj [URI, Store::Digest::Entry]
   #
-  # @return [Store::Digest::Object, nil]
+  # @return [Store::Digest::Entry, nil]
   def get obj
     transaction readonly: true do
       obj = coerce_object obj
       if h = get_meta(obj) # bail if this does not exist
         b = get_blob h[:digests][primary].digest # may be nil
-        Store::Digest::Object.new b, **h
+        Store::Digest::Entry.new b, **h
       end
     end
   end
@@ -212,7 +212,7 @@ class Store::Digest
     transaction do
       if meta = forget ? remove_meta(obj) : mark_meta_deleted(obj)
         if blob = remove_blob(meta[:digests][primary].digest)
-          Store::Digest::Object.new blob, **meta
+          Store::Digest::Entry.new blob, **meta
         end
       end
     end

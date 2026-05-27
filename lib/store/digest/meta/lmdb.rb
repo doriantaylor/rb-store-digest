@@ -466,7 +466,7 @@ module Store::Digest::Meta::LMDB
     # an otherwise identical record overtop of an existing one will
     # return `nil`.
     #
-    # @param obj [Store::Digest::Object] the object to store
+    # @param obj [Store::Digest::Entry] the object to store
     # @param preserve [false, true] whether to preserve the mtime
     # @return [nil, Hash] maybe the metadata content of the object
     #
@@ -676,7 +676,7 @@ module Store::Digest::Meta::LMDB
     private
 
     # import the flags
-    Flags = Store::Digest::Object::Flags
+    Flags = Store::Digest::Entry::Flags
 
     # XXX do we want to introduce dry-types? didn't i try before and
     # it was a huge clusterfuck?
@@ -959,7 +959,7 @@ module Store::Digest::Meta::LMDB
 
     # Return a packed string suitable to store as a record.
     #
-    # @param obj [Store::Digest::Object, Hash]
+    # @param obj [Store::Digest::Entry, Hash]
     #
     # @return [String]
     #
@@ -971,11 +971,11 @@ module Store::Digest::Meta::LMDB
       algos + rec.pack(PACKED)
     end
 
-    # Get an integer entry key from a {Store::Digest::Object} or
+    # Get an integer entry key from a {Store::Digest::Entry} or
     # {Hash} representation thereof, or hash of digests to {URI::NI}
     # objects.
     #
-    # @param obj [Store::Digest::Object, Hash]
+    # @param obj [Store::Digest::Entry, Hash]
     # @param raw [false, true] whether to return the raw bytes
     #
     # @return [Integer, nil]
@@ -1013,7 +1013,7 @@ module Store::Digest::Meta::LMDB
 
     # Retrieve a record from the database.
     #
-    # @param obj [Store::Digest::Object, Hash, URI::NI, Integer] the
+    # @param obj [Store::Digest::Entry, Hash, URI::NI, Integer] the
     #  entry's key, or an object from which it can be resolved
     # @param raw [false, true] whether to leave the result as raw bytes
     #
@@ -1024,7 +1024,7 @@ module Store::Digest::Meta::LMDB
         # get the pointer
         ptr = case obj
               when String then obj
-              when Hash, Store::Digest::Object then get_ptr obj, raw: true
+              when Hash, Store::Digest::Entry then get_ptr obj, raw: true
               when Integer then [obj].pack ?J
               when URI::NI then @dbs[obj.algorithm.to_sym][obj.digest]
               else
@@ -1039,9 +1039,9 @@ module Store::Digest::Meta::LMDB
       end
     end
 
-    # Persist the metadata for a {Store::Digest::Object}.
+    # Persist the metadata for a {Store::Digest::Entry}.
     #
-    # @param obj [Store::Digest::Object]
+    # @param obj [Store::Digest::Entry]
     #
     # @return [void]
     #
@@ -1214,7 +1214,7 @@ module Store::Digest::Meta::LMDB
 
     # Set `dtime` to the current timestamp and update the indices and stats.
     #
-    # @param obj [Store::Digest::Object, Hash, URI::NI, Integer] the
+    # @param obj [Store::Digest::Entry, Hash, URI::NI, Integer] the
     #  entry's key, or an object from which it can be resolved
     #
     # @return [Hash, nil] the record, if it exists
@@ -1254,7 +1254,7 @@ module Store::Digest::Meta::LMDB
     # Purge the metadata entry from the database and remove it from
     # the indices.
     #
-    # @param obj [Store::Digest::Object, Hash, URI::NI, Integer] the
+    # @param obj [Store::Digest::Entry, Hash, URI::NI, Integer] the
     #  entry's key, or an object from which it can be resolved
     #
     # @return [Hash, nil] the record, if it exists

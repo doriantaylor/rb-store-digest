@@ -37,7 +37,7 @@ module Store::Digest::Meta
 
   # Set/add an individual object's metadata to the database.
   #
-  # @param obj [Store::Digest::Object] the object to store
+  # @param obj [Store::Digest::Entry] the object to store
   # @param preserve [false, true] flag to preserve modification time
   #
   # @return [void]
