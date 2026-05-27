@@ -496,7 +496,7 @@ class Store::Digest::Object
   # @return [self]
   #
   def each &block
-    while buf = read BLOCKSIZE
+    while buf = read(BLOCKSIZE)
       block.call buf
     end
 
