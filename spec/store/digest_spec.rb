@@ -70,7 +70,7 @@ RSpec.describe Store::Digest do
   context 'storing objects' do
     # XXX a few of these are redundant
 
-    # store should add a String/IO/File/Pathname/Store::Digest::Object
+    # store should add a String/IO/File/Pathname/Store::Digest::Entry
     # store should complain if IO is not seekable
     # store should complain if S:D:O is not in order
     # store should complain if obj.size does not match content size
@@ -104,7 +104,7 @@ RSpec.describe Store::Digest do
       obj = subject.add 'lol', type: 'application/x-derp'
       expect(obj.fresh?).to be_truthy
       wut = subject.get obj
-      expect(wut).to be_a(Store::Digest::Object)
+      expect(wut).to be_a(Store::Digest::Entry)
     end
 
     it 'should set obj.fresh? to false for an existing object' do
@@ -112,7 +112,7 @@ RSpec.describe Store::Digest do
       # already present
       # (lol god now we are repeating this mimetype to make the tests pass)
       old = subject.get URI::NI.compute('lol')
-      expect(old).to be_a(Store::Digest::Object)
+      expect(old).to be_a(Store::Digest::Entry)
       expect(old.type).to eql('application/x-derp')
 
       obj = subject.add old, type: 'application/x-derp'
@@ -138,7 +138,7 @@ RSpec.describe Store::Digest do
   end
 
   context 'retrieving objects' do
-    # store should get a String/IO/File/Pathname/Store::Digest::Object/URI::NI
+    # store should get a String/IO/File/Pathname/Store::Digest::Entry/URI::NI
     # store.get should scan an S:D:O if it is not scanned (ie, no digest
     #   URIs), and complain if it can't scan (ie, if there is no content)
     # store.get should return nil if the object is not in the store
@@ -150,7 +150,7 @@ RSpec.describe Store::Digest do
   end
 
   context 'removing objects' do
-    # store should remove a URI::NI/Store::Digest::Object/String/IO/File/Pathname
+    # store should remove a URI::NI/Store::Digest::Entry/String/IO/File/Pathname
     # store.remove returns the removed object
     # store.remove should set the object's dtime
     # store.remove should nuke the blob *

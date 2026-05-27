@@ -1,6 +1,6 @@
-RSpec.describe Store::Digest::Object do
+RSpec.describe Store::Digest::Entry do
   context 'creating an object' do
-    obj = Store::Digest::Object.new
+    obj = Store::Digest::Entry.new
 
     it 'initializes with empty content' do
       # object initializes blank
@@ -25,20 +25,20 @@ RSpec.describe Store::Digest::Object do
   context 'scanning data' do
     it 'can scan a String' do
       # object can scan a String
-      obj = Store::Digest::Object.scan 'string lol'
+      obj = Store::Digest::Entry.scan 'string lol'
       expect(obj.size).to be 10
       expect(obj.type).to eql 'text/plain'
 
       # tucking the io wrapper test here for now
-      expect(obj.content).to be_a(Store::Digest::Object::IOWrapper)
+      expect(obj.content).to be_a(Store::Digest::Entry::IOWrapper)
       expect(obj.content.read).to eql 'string lol'
-      expect(obj.content.object).to be_a(Store::Digest::Object)
+      expect(obj.content.object).to be_a(Store::Digest::Entry)
     end
 
     it 'can scan a File' do
       # object can scan a File
       fh  = File.open __FILE__
-      obj = Store::Digest::Object.scan fh
+      obj = Store::Digest::Entry.scan fh
 
       expect(obj.size).to be fh.size
       expect(obj.type).to eql 'application/x-ruby'
@@ -49,7 +49,7 @@ RSpec.describe Store::Digest::Object do
       # object can scan a Pathname
       pn = Pathname(__FILE__)
 
-      obj = Store::Digest::Object.scan pn
+      obj = Store::Digest::Entry.scan pn
 
       expect(obj.size).to be pn.size
       expect(obj.type).to eql 'application/x-ruby'
@@ -64,14 +64,14 @@ RSpec.describe Store::Digest::Object do
     it 'can scan a Proc (that returns an IO)' do
     # object can scan a Proc (that returns an IO)
       proc = Proc.new { StringIO.new 'lol' }
-      obj  = Store::Digest::Object.scan(proc)
+      obj  = Store::Digest::Entry.scan(proc)
       expect(obj.size).to be 3
     end
 
     it 'complains if the coerced IO can\'t seek/tell' do
       # object complains if the coerced IO can't seek/tell (ie no pipes/sockets)
       io = IO.popen ['ping', '-?'], err: %i[child out]
-      expect { Store::Digest::Object.scan io }.to raise_error(Errno::ESPIPE)
+      expect { Store::Digest::Entry.scan io }.to raise_error(Errno::ESPIPE)
     end
 
     # object correctly sets blob size from scan

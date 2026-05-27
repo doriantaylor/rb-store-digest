@@ -71,7 +71,7 @@ end
 
 # Store entry object class.
 #
-class Store::Digest::Object
+class Store::Digest::Entry
 
   # Proxy IO instance that has a backreference to the store object.
   #
@@ -92,7 +92,7 @@ class Store::Digest::Object
 
     # Initialize the IO wrapper
     #
-    # @param object [Store::Digest::Object] backreference to object
+    # @param object [Store::Digest::Entry] backreference to object
     # @param io [IO] IO-ish thing
     #
     def initialize io, object: nil, store: nil, type: nil, charset: nil,
@@ -138,9 +138,9 @@ class Store::Digest::Object
     class << cls
       # Initialize a struct of flags from arbitrary input
       #
-      # @param arg [Store::Digest::Object::Flags, Integer, #to_h, #to_a]
+      # @param arg [Store::Digest::Entry::Flags, Integer, #to_h, #to_a]
       #
-      # @return [Store::Digest::Object::Flags]
+      # @return [Store::Digest::Entry::Flags]
       #
       def from arg
         # get the length since we use it in a few places
@@ -291,7 +291,7 @@ class Store::Digest::Object
   # @param strict [true, false] raise an error on bad input
   # @param fresh [true, false] assert "freshness" of object vis-a-vis the store
   #
-  # @return [Store::Digest::Object] the object in question
+  # @return [Store::Digest::Entry] the object in question
   #
   def initialize content = nil, store: nil, digests: {}, size: 0,
       type: 'application/octet-stream', charset: nil, language: nil,
@@ -777,3 +777,5 @@ class Store::Digest::Object
     out
   end
 end
+
+Store::Digest::Object = Store::Digest::Entry
