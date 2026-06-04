@@ -1,10 +1,14 @@
 RSpec.describe Store::Digest::Entry do
-  context 'creating an object' do
-    obj = Store::Digest::Entry.new
+  context 'creating an entry' do
+    it 'now must be initialized with a value' do
+      expect { Store::Digest::Entry.new }.to raise_error(ArgumentError)
+    end
 
-    it 'initializes with empty content' do
+    obj = Store::Digest::Entry.new nil
+
+    it 'has a noop for #content' do
       # object initializes blank
-      expect(obj.content).to be_nil
+      expect(obj.content).to equal(object)
     end
 
     it 'has the most basic content type' do
@@ -30,7 +34,6 @@ RSpec.describe Store::Digest::Entry do
       expect(obj.type).to eql 'text/plain'
 
       # tucking the io wrapper test here for now
-      expect(obj.content).to be_a(Store::Digest::Entry::IOWrapper)
       expect(obj.content.read).to eql 'string lol'
       expect(obj.content.object).to be_a(Store::Digest::Entry)
     end

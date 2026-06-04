@@ -27,15 +27,14 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>= 3.0'
 
   # dev/test dependencies
-  spec.add_development_dependency 'bundler', '>= 2.1'
-  spec.add_development_dependency 'rake',    '>= 13.0'
-  spec.add_development_dependency 'rspec',   '>= 3.9'
+  spec.add_development_dependency 'bundler', '~> 2', '>= 2.6'
+  spec.add_development_dependency 'rake',    '~> 13'
+  spec.add_development_dependency 'rspec',   '~> 3', '>= 3.9'
 
   # stuff we use
   spec.add_runtime_dependency 'base64',    '~> 0.3' # stop it complaining
   spec.add_runtime_dependency 'base32',    '~> 0.3', '>= 0.3.2'
-  spec.add_runtime_dependency 'lmdb',      '~> 0.7', '>= 0.7.1' # my hacks
-#  spec.add_runtime_dependency 'mimemagic', '>= 0.4.3', '< 0.5'
-  spec.add_runtime_dependency 'mimemagic', '>= 0.4.3'
+  spec.add_runtime_dependency 'lmdb',      '~> 0.7', '>= 0.7.5' # my hacks
+  spec.add_runtime_dependency 'mimemagic-dorian', '~> 0.5' # reluctantly my hacks
   spec.add_runtime_dependency 'uri-ni',    '>= 0.1.4'
 end

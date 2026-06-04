@@ -82,11 +82,114 @@ class Store::Digest
 
   # alias_method :inspect, :to_s
 
-  # Add an object to the store. Takes pretty much anything that makes
+  # The difference between this and {#add} is that this takes a raw
+  # blob, eagerly scans it, and returns a `Hash`, whereas {#add}
+  # returns a {Store::Digest::Entry} object which can optionally scan
+  # lazily.
+  #
+  def add_raw content, blocksize: nil, preserve: false, **params
+    # slice out the subset
+    params.slice! :type, :charset, :language, :encoding, :mtime, :cache
+    # this will automatically coerce
+    params[:type] = MimeMagic[params[:type]]
+    # add a modification time if missing
+    params[:mtime] ||= Time.now
+
+    transaction do
+      # temporary file handle
+      tmp = temp_blob
+
+      # get the basic scannable values
+      digests, size, stype = Entry.scan_raw(
+        content, algorithms: algorithms, type: true) { |buf| tmp << buf }
+
+      # always add these
+      params[:digests] = digests
+
+      # the size is authoritative
+      params[:size] = size
+
+      if params[:type]
+        # only overwrite the type if it's a descendant of the supplied
+        params[:type] = stype if stype.descendant_of? params[:type]
+      else
+        # otherwise add unconditionally
+        params[:type] = stype
+      end
+
+      # replace the content with the settled blob
+      content = settle_blob digests[primary].digest, tmp, mtime: mtime
+
+      # `set_meta` returns nil if unchanged
+      meta = set_meta(params, preserve: preserve) || params
+
+      # return the ensemble
+      [content, meta]
+    end
+  end
+
+  # okay so:
+  #
+  # * the scanning nominally comes from the entry (class method)
+  #   * hashes
+  #   * size (bytes)
+  #   * content-type (sampled)
+  # * the temp blob comes from the store
+  # * so does the settled blob (which could also be the temp blob)
+  # * everything else comes from the user (whether from params or entry)
+  #
+  # issues:
+  #
+  # * the store doesn't trust the entry to do the scanning so it has
+  #   to do its own scan
+  #   * (therefore make the actual scanning a class method)
+  # * however an entry that has an internal reference to the store
+  #   should delegate scanning to it
+  #   * the entry could just run `Store#add` that returns a fresh
+  #     entry and shuck it for its contents and then throw it away
+  #     * although Store::Digest::Entry deliberately obscures its
+  #       contents so no that's no good
+
+  # * we don't want a turducken of entry objects; we want the raw file
+  #   handle (or rather the lambda that returns a handle) and a wad of
+  #   metadata
+
+  # * so i think `#add_raw` is the right idea but the question is what
+  #   is its interface
+  #   * the blob to be scanned
+  #   * all known metadata
+  #   * it should return the blob to use (or blob-returning
+  #     lambda/closure/whatever) and whatever metadata comes out of
+  #     scanning (hashes, size, content type)
+  #     * content type and encoding may be different
+  #     * ctime and ptime may be different from expected
+  #       * dtime may be different
+  #     * flags may be different (eg cache flag cleared)
+  #   * actually fuck it just give back the equivalent of `Entry#to_h`
+  #
+  def add_raw2
+    transaction do
+      tmp = tmp_blob
+
+      Entry.scan_raw2(content, tmp, algorithms: algorithms, type: true) do
+
+        content = settle_blob digests[primary].digest, tmp, mtime: mtime
+
+        # `set_meta` returns nil if unchanged
+        meta = set_meta(params, preserve: preserve) || params
+
+        [content, meta]
+      end
+    end
+  end
+
+  # Add an object to the store. Will accept pretty much anything that makes
   # sense to throw at it.
   #
-  # @note Prefabricated {Store::Digest::Entry} instances will be
-  #   rescanned.
+  # @note Already-scanned {Store::Digest::Entry} instances will have
+  #  to be rescanned, since the store can't trust the digests. Use
+  #  {#add} or {Store::Digest::Entry#add_to} on an unscanned entry to
+  #  scan only once.
   #
   # @note `:preserve` will cause a noop if object metadata is identical
   #   save for `:ctime` and `:mtime` (`:ctime` is always ignored).
@@ -99,7 +202,7 @@ class Store::Digest
   # @param mtime [Time] the modification time, if not "now"
   # @param strict [true, false] strict checking on metadata input
   # @param preserve [false, true] preserve existing modification time
-  # @param cache [false, true, Time] whether the object should be
+  # @param cache [false, true, Numeric, Time] whether the object should be
   #  treated as cache, and/or when to evict it
   #
   # @return [Store::Digest::Entry] The (potentially pre-existing) entry
@@ -158,29 +261,6 @@ class Store::Digest
 
       obj
     end
-  end
-
-  # Returns a readable, rewindable object that will add the argument
-  # to the store only when read.
-  #
-  # @param readable [IO,File,Pathname,String] the thing to read
-  # @param type [String] the content type
-  # @param charset [String] the character set, if applicable
-  # @param language [String] the language, if applicable
-  # @param encoding [String] the encoding (eg compression) if applicable
-  # @param mtime [Time] the modification time, if not "now"
-  # @param strict [true, false] strict checking on metadata input
-  # @param preserve [false, true] preserve existing modification time
-  # @param cache [false, true, Time] whether the object should be
-  #  treated as cache, and/or when to evict it
-  #
-  # @return [Store::Digest::Entry::IOWrapper] the IO wrapper
-  #
-  def lazy_add readable, type: nil, charset: nil, language: nil, encoding: nil,
-      mtime: nil, strict: true, preserve: false, cache: false
-    Store::Digest::Entry::IOWrapper.new readable, store: self,
-      type: type, charset: charset, language: language, encoding: encoding,
-      mtime: mtime, strict: strict, preserve: preserve, cache: cache
   end
 
   # Retrieve an object from the store.

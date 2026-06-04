@@ -61,13 +61,17 @@ module Store::Digest::Blob::FileSystem
   end
 
   # Settle a blob from its temporary location to its permanent location.
+  #
   # @param bin [String] The binary representation of the keying digest
   # @param fh  [File] An open filehandle, presumably a temp file
   # @param mtime [nil, Time, DateTime, Integer] the modification time
   #  (defaults to now)
   # @param overwrite [false, true] whether to overwrite the target
-  # @return [true] a throwaway return value
+  #
   # @raise [SystemCallError] as we are mucking with the file system
+  #
+  # @return [Proc] a lambda that returns a read handle
+  #
   def settle_blob bin, fh, mtime: nil, overwrite: false
     # get the mtimes
     mtime ||= Time.now
@@ -100,7 +104,8 @@ module Store::Digest::Blob::FileSystem
       target.utime mtime, mtime
     end
 
-    true
+    # return a proc that returns the open file handle
+    -> { target.open 'rb' }
   end
 
   # Return a blob filehandle (or closure that will return said blob).
