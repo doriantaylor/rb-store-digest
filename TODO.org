@@ -1,4 +1,43 @@
 #+STARTUP: showall indent hidestars
+* TODO 2026-06-07 remaining tasks for scanning overhaul
+- [ ] ~Store::Digest~
+  - [ ] create ~#has?~ predicate
+    - [ ] test it doyy
+  - [ ] overhaul ~#add~
+    - [ ] make it pass through to ~Entry~ constructor
+    - [ ] create ~#add_raw~
+      - [ ] canonicalize media type
+      - [ ] update TTL on cache entries on match
+      - [ ] return a hash
+  - [ ] overhaul ~#remove~
+    - [ ] add ~tombstone:~ parameter to return already-deleted entities
+    - [ ] create ~#remove_raw~
+      - [ ] do we /really/ need to create a ~#remove_raw~?
+      - [ ] can we add a ~remove:~ flag to ~#get_raw~?
+  - [ ] overhaul ~#get~
+    - [ ] add ~tombstone:~ parameter to return already-deleted entities
+    - [ ] make it pass through to ~Entry~ constructor
+    - [ ] create ~#get_raw~
+      - [ ] silently remove expired cache items
+        - could probably chuck some kinda ~#purge~ operation in a thread; run it every few seconds
+      - [ ] return the same hash as ~#add_raw~
+- [ ] ~Store::Digest::Entry~
+  - [ ] finish modifications to ~#initialize~
+    - [ ] prune out parameters that you shouldn't be able to mess with
+    - [ ] add ~#store.get_raw~ scenario to constructor
+      - [ ] if ~content~ is ~nil~ and there is a ~store:~ supplied
+      - [ ] (~content~ /must not/ be ~nil~ /except/ if there is a ~store:~)
+      - [ ] maybe implement as a block?
+  - [ ] implement ~#add~
+    - [ ] may be a noop if already associated with the store
+    - [ ] should produce an error if entry is a tombstone/has no content
+    - [ ] otherwise the entry will have to be rescanned
+  - [ ] implement ~#remove~
+  - [ ] implement ~#scan!~
+    - [ ] use ~store.add_raw~ if associated with a store
+      - (this returns a file handle or precursor thereto)
+    - [ ] otherwise use ~self.class.scan_raw~
+      - (this needs its own filehandle, or we can reuse the input if rewindable)
 * TODO 2026-05-26 beef up scanning
 - *GOAL*: We want to be able to drop one of these objects into a ~Rack~ message body — either request or response — and it should JFW.
   - We should be able to take what's already in there and initialize the object with that.
@@ -19,8 +58,8 @@
         - [X] that takes a write handle as its first (only?) argument
     - [ ] provide a ~store:~ named parameter for associating with a ~Store::Digest~ instance
     - [ ] make it so ~digests:~ can take an ~Array~ of ~Symbol~ objects that represent the desired algorithms when the content is eventually scanned
-    - [ ] add a ~cache:~ named parameter which can be falsy, truthy, or a ~Time~ object indicating the desired expiry date
-    - [ ] add an ~eager:~ named parameter (effectively the same as invoking ~.new(…).scan~)
+    - [ ] add a ~cache:~ named parameter which can be falsy, truthy, an integer representing a TTL, or a ~Time~ object indicating the desired expiry date
+    - [ ] add scan ~scan:~ named parameter (effectively the same as invoking ~.new(…).scan~)
   - [ ] do not scan input until an attempt to access its contents
     - [ ] first call to ~#each~, ~#gets~, ~#read~, or ~#content~
     - [ ] first call to the ~#digests~ hash or any of the dependent metadata, such as ~#size~
@@ -33,11 +72,16 @@
     - [ ] swap in a different read handle if there is no backreference to the store
       - [ ] the passed-in handle itself if it responds to ~#binmode~ and ~#rewind~
       - [ ] ~StringIO~ for small blobs (1k? 10k? 64k?)
+        - how would I do that? start writing to a ~StringIO~ and if it ticks over the limit, dump that into a temp file and switch?
+          - (probably)
+          - (the benefit to doing that, aside from being faster, would be to mitigate the number of concurrent open file handles)
+          - (at the cost of bigger stuff being one blit slower)
+          - (honestly it'd probably get buffered in ram anyway)
       - [ ] otherwise an ordinary temporary file
   - [ ] Overhaul ~.scan~ class method to align with new constructor
     - [ ] ~store:~ named parameter
     - [ ] ~cache:~ named parameter
-    - [ ] initialize with ~eager: true~, obviously
+    - [ ] initialize with ~scan: true~, obviously
   - [X] create a ~.scan_raw~ class method so ~Store::Digest~ can use it independently
     - [X] make it return a minimal set: digest hashes, byte count, and optional (scanned) content type
   - [ ] if hashes are already supplied in the constructor then it is assumed to be scanned already
@@ -52,12 +96,14 @@
     - [ ] ~#gets~
     - [ ] ~#read~
     - [ ] ~#rewind~
-      - [ ] ensure that any call 
     - [ ] ~#open~ (no-op)
     - [ ] ~#close~ (no-op)
   - [ ] make ~#content~ a no-op
+  - [ ] going to have to overhaul ~#to_h~
+    - [ ] make a version that doesn't scan?
+  - [ ] add ~#stored?~
 - [-] ~Store::Digest~ changes
-  - [ ] add something like a ~#scan_raw~ method that will take the entry's readable object and return a ~Hash~ of metadata plus a lambda that returns a rewindable file handle
+  - [ ] add something like a ~#add_raw~ method that will take the entry's readable object and return a ~Hash~ of metadata plus a lambda that returns a rewindable file handle
   - [ ] overhaul ~#add~
   - [ ] overhaul ~#get~
   - [X] nuke ~#lazy_add~; it is no longer necessary
@@ -65,12 +111,12 @@
   - [X] lobby maintainers to merge my patches (again; not a peep in years)
   - [X] failing that, ship a fork
 * TODO upgrade metadata format
-- [ ] get rid of the idea of a 'primary' digest algorithm
-  - [ ] change the main record to being keyed by integers and contain all hashes
+- [X] get rid of the idea of a 'primary' digest algorithm
+  - [X] change the main record to being keyed by integers and contain all hashes
     - old: ≥209 bytes + 316 mapping
     - new: ≥218 + 220 mapping
-  - [ ] make digest -> integer mapping
-- [ ] add version to metadata
+  - [X] make digest -> integer mapping
+- [X] add version to metadata
 - [ ] add function to upgrade metadata store
 * TODO add cache capability
 - [ ] add fields to control:

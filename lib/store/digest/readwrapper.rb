@@ -38,21 +38,38 @@ class Store::Digest::ReadWrapper
 
   public
 
+  def self.assert! obj, thunk: false
+    return true if obj.is_a?(self) || quacks?(obj) || obj.respond_to?(:each)
+
+    if obj.respond_to?(:call)
+      elsif obj.respond.to_?
+    end
+  end
+
   # Attempt to coerce a suitable object or no-op.
   #
   # @param obj [Object] an object to be coerced
   #
-  # @raise [ArgumentError] object not sufficiently coercible
+  # @param thunk [false, true] let a thunk (a zero-arity callable that
+  #  in this case returns a read handle) pass through; if falsy, it
+  #  will execute the thunk and expect it to return something that
+  #  quacks like a read handle, and throw an error if it isn't.
   #
-  # @return [ReadWrapper] a new around whatever this is
+  # @raise [ArgumentError] if the input is not sufficiently coercible
   #
-  def self.coerce obj
+  # @return [ReadWrapper,Object] a new proxy object around whatever
+  #  the input is, or the original input if file-handle-ey enough
+  #
+  def self.coerce obj, thunk: false
     return obj if obj.is_a? self
 
     return obj if quacks? obj # no need for this if it can read
 
     # response bodies /don't do this but other stuff does
-    if obj.respond_to? :call and obj.method(:call).arity == 0
+    if obj.respond_to?(:call) and obj.method(:call).arity == 0
+      # let the thunk through
+      return obj if thunk
+
       out = obj.call
       raise ArgumentError,
         'a `call` with no arguments must return an IO-like object' unless

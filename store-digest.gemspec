@@ -36,5 +36,5 @@ Gem::Specification.new do |spec|
   spec.add_runtime_dependency 'base32',    '~> 0.3', '>= 0.3.2'
   spec.add_runtime_dependency 'lmdb',      '~> 0.7', '>= 0.7.5' # my hacks
   spec.add_runtime_dependency 'mimemagic-dorian', '~> 0.5' # reluctantly my hacks
-  spec.add_runtime_dependency 'uri-ni',    '>= 0.1.4'
+  spec.add_runtime_dependency 'uri-ni',    '~> 0.2', '>= 0.2.2' # mine
 end

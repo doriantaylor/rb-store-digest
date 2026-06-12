@@ -1011,6 +1011,8 @@ module Store::Digest::Meta::LMDB
       raw ? out : out.unpack1(?J)
     end
 
+    protected
+
     # Retrieve a record from the database.
     #
     # @param obj [Store::Digest::Entry, Hash, URI::NI, Integer] the
@@ -1293,6 +1295,26 @@ module Store::Digest::Meta::LMDB
         # the deleted record
         rec
       end
+    end
+
+    public
+
+    # Return the default time-to-live on cache entries.
+    #
+    # @return [Integer] the TTL in seconds
+    #
+    def cache_ttl
+      control_get :expiry
+    end
+
+    # Set a new default time-to-live on cache entries.
+    #
+    # @param ttl [
+    #
+    # @return [Integer] the new TTL in seconds
+    #
+    def cache_ttl= ttl
+      control_set :expiry, ttl
     end
   end
 

@@ -49,82 +49,116 @@ class Store::Digest
     obj
   end
 
-  public
-
-  # Initialize a storage
-  def initialize **options
-    driver = options.delete(:driver) || Store::Digest::Driver::LMDB
-
-    unless driver.is_a? Module
-      # coerce to symbol
-      driver = driver.to_s.to_sym
-      raise ArgumentError,
-        "There is no storage driver Store::Digest::Driver::#{driver}" unless
-        Store::Digest::Driver.const_defined? driver
-      driver = Store::Digest::Driver.const_get driver
+  #
+  # @raise [ArgumentError] if the URIs can't be coerced
+  #
+  # @return [URI::NI, Array<URI::NI>]
+  #
+  def coerce_uri obj, select: true
+    if obj.is_a? Store::Digest::Entry
+      digests = obj.digests
+      raise ArgumentError, 'Digest list is empty' if digests.empty?
+    else
+      # this can also raise
+      digests = Store::Digest::Entry.coerce_digests obj, normative: true
     end
 
-    raise ArgumentError,
-      "Driver #{driver} is not a Store::Digest::Driver" unless
-      driver.ancestors.include? Store::Digest::Driver
+    if select
 
-    extend driver
-
-    #
-    setup(**options)
+    return digests.values unless select
   end
 
-  # XXX this is not right; leave it for now
-  # def to_s
-  #   '<%s:0x%016x objects=%d deleted=%d bytes=%d>' %
-  #     [self.class, self.object_id, objects, deleted, bytes]
-  # end
+  # From a metadata hash, determine if the entry is cache.
+  #
+  # @param meta [Hash] the metadata hash from the store
+  #
+  # @return [false, true]
+  #
+  def cache? meta
+    (meta[:flags] & Store::Digest::Entry::IS_CACHE).nonzero?
+  end
 
-  # alias_method :inspect, :to_s
+  # From a metadata hash, determine if the entry should be deleted.
+  #
+  # @param meta [Hash] the metadata hash from the store
+  #
+  # @return [false, true]
+  #
+  def deleted? meta
+    return false unless dtime = meta[:dtime]
+    cache?(meta) && dtime <= Time.now
+  end
+
+  # From an RFC6920 URI, get a raw hash
+  #
+  # @param uri [URI::NI] a digest URI
+  # @param tombstone [false, true] whether to return deleted metadata
+  #  records
+  # @param remove [false, true, :forget] whether to remove (and
+  #  forget) the record
+  #
+  # @return [Hash] the raw entry data
+  #
+  def get_raw uri, tombstone: false, remove: false
+    uri = coerce_uri uri
+
+    if remove
+      # this is how we pun
+      mm = remove == :forget ? :remove_meta : :mark_meta_deleted
+      bm = :remove_blob
+    else
+      mm = :get_meta
+      bm = :get_blob
+    end
+
+    transaction readonly: remove do
+      if meta = send(:mm, uri)
+        if blob = send(:bm, meta[:digests][primary].digest)
+          meta.merge content: blob
+        elsif tombstone
+          meta
+        end
+      end
+    end
+  end
 
   # The difference between this and {#add} is that this takes a raw
   # blob, eagerly scans it, and returns a `Hash`, whereas {#add}
   # returns a {Store::Digest::Entry} object which can optionally scan
   # lazily.
   #
-  def add_raw content, blocksize: nil, preserve: false, **params
+  def add_raw content, **params
     # slice out the subset
     params.slice! :type, :charset, :language, :encoding, :mtime, :cache
-    # this will automatically coerce
+    # this will automatically coerce nil to application/octet-stream
     params[:type] = MimeMagic[params[:type]]
     # add a modification time if missing
     params[:mtime] ||= Time.now
 
     transaction do
-      # temporary file handle
+      # managed temporary file handle
       tmp = temp_blob
 
-      # get the basic scannable values
-      digests, size, stype = Entry.scan_raw(
-        content, algorithms: algorithms, type: true) { |buf| tmp << buf }
+      # get the basic scannable values (digests, size, type)
+      scanned = Entry.scan_raw(
+        content, algorithms: algorithms,
+        blocksize: blocksize, type: true) { |buf| tmp << buf }
 
-      # always add these
-      params[:digests] = digests
+      # remove the scanned type if it is less specific than supplied
+      scanned.delete(:type) if params[:type] and
+        !scanned[:type].descendant_of?(params[:type])
 
-      # the size is authoritative
-      params[:size] = size
-
-      if params[:type]
-        # only overwrite the type if it's a descendant of the supplied
-        params[:type] = stype if stype.descendant_of? params[:type]
-      else
-        # otherwise add unconditionally
-        params[:type] = stype
-      end
+      # now merge the scanned params into the supplied ones
+      params.merge! scanned
 
       # replace the content with the settled blob
-      content = settle_blob digests[primary].digest, tmp, mtime: mtime
+      content = settle_blob params[:digests][primary].digest, tmp, mtime: mtime
 
       # `set_meta` returns nil if unchanged
       meta = set_meta(params, preserve: preserve) || params
 
-      # return the ensemble
-      [content, meta]
+      # return the hash with the content
+      meta.merge(content: content)
     end
   end
 
@@ -166,6 +200,7 @@ class Store::Digest
   #       * dtime may be different
   #     * flags may be different (eg cache flag cleared)
   #   * actually fuck it just give back the equivalent of `Entry#to_h`
+  #     (which has a `content:` key)
   #
   def add_raw2
     transaction do
@@ -178,10 +213,60 @@ class Store::Digest
         # `set_meta` returns nil if unchanged
         meta = set_meta(params, preserve: preserve) || params
 
-        [content, meta]
+        hash
       end
     end
   end
+
+  public
+
+  # Initialize a content-addressable store.
+  #
+  # @note See individual drivers for driver-specific options.
+  #
+  # @see Store::Digest::Driver::LMDB
+  #
+  # @param driver [Module, Symbol, #to_sym] the driver to use
+  # @param blocksize [Integer] the default block size for scanning blobs
+  # @param mtimes [:preserve, :older, :newer] modification time overwrite policy
+  #
+  # @return [void]
+  #
+  def initialize driver: Store::Digest::Driver::LMDB,
+      blocksize: 2**16, mtimes: :preserve, **options
+    driver = ||= Store::Digest::Driver::LMDB
+
+    @blocksize = blocksize
+    @mtimes == mtimes || :preserve
+
+    unless driver.is_a? Module
+      # coerce to symbol
+      driver = driver.to_s.to_sym
+      raise ArgumentError,
+        "There is no storage driver Store::Digest::Driver::#{driver}" unless
+        Store::Digest::Driver.const_defined? driver
+      driver = Store::Digest::Driver.const_get driver
+    end
+
+    raise ArgumentError,
+      "Driver #{driver} is not a Store::Digest::Driver" unless
+      driver.ancestors.include? Store::Digest::Driver
+
+    extend driver
+
+    #
+    setup(**options)
+  end
+
+  attr_reader :blocksize, :mtimes
+
+  # XXX this is not right; leave it for now
+  # def to_s
+  #   '<%s:0x%016x objects=%d deleted=%d bytes=%d>' %
+  #     [self.class, self.object_id, objects, deleted, bytes]
+  # end
+
+  # alias_method :inspect, :to_s
 
   # Add an object to the store. Will accept pretty much anything that makes
   # sense to throw at it.
@@ -201,100 +286,85 @@ class Store::Digest
   # @param encoding [String] the encoding (eg compression) if applicable
   # @param mtime [Time] the modification time, if not "now"
   # @param strict [true, false] strict checking on metadata input
-  # @param preserve [false, true] preserve existing modification time
+  # @param preserve [false, true] preserve modification time if the
+  #  object already exists in the store
   # @param cache [false, true, Numeric, Time] whether the object should be
   #  treated as cache, and/or when to evict it
   #
   # @return [Store::Digest::Entry] The (potentially pre-existing) entry
   #
-  def add obj, type: nil, charset: nil, language: nil, encoding: nil,
-      mtime: nil, strict: true, preserve: false, cache: nil
-    return unless obj
+  def add obj, digests: nil, type: nil, charset: nil, language: nil,
+      encoding: nil, mtime: nil, cache: false, scan: false
 
-    transaction do # |txn|
-      obj = coerce_object obj, type: type, charset: charset, language: language,
-        encoding: encoding, mtime: mtime, strict: strict
-      raise ArgumentError, 'We need something to store!' unless obj.content?
+    # XXX this circumvents the integrity check
+    return obj.add(self) if obj.is_a? Store::Digest::Entry
 
-      # this method is helicoptered in
-      tmp = temp_blob
+    Store::Digest::ReadWrapper.assert! obj
 
-      # XXX this is stupid; figure out a better way to do this
+    Store::Digest::Entry.new obj, store: self, digests: digests,
+      type: type, charset: charset, language: language, encoding: encoding,
+      mtime: mtime, cache: cache, scan: scan
+  end
 
-      # get our digests
-      obj.scan(digests: algorithms, blocksize: 2**16, strict: strict,
-        type: type, charset: charset, language: language,
-        encoding: encoding, mtime: mtime) do |buf|
-        tmp << buf
-      end
+  # Returns true if the entry is in the store.
+  #
+  # @param entry [URI::NI, Store::Digest::Entry] the hash address of
+  #  an entry, or an entry object itself
+  # @param tombstone [false, true] whether to return "tombstone"
+  #  metadata records of deleted entries
+  #
+  # @return [false, true] whether the entry (or its tombstone) is
+  #  present in the store
+  #
+  def has? entry, tombstone: false
+    # coerce just because
+    tombstone = !!tombstone
 
-      # if we are scanning an object it is necessarily not deleted
-      obj.dtime = nil
+    transaction readonly: true do
+      # obviously false if there's no record
+      break false unless h = get_meta(entry)
 
-      # set_meta will return nil if there is no difference in what is set
-      if h = set_meta(obj, preserve: preserve)
-        # warn h.inspect
-        # replace the object
-
-        content = obj.content
-
-        # do this to prevent too many open files
-        if content.is_a? File
-          path = Pathname(content.path).expand_path
-          content = -> { path.open('rb') }
-        end
-
-        obj = Store::Digest::Entry.new content, fresh: true, **h
-
-        # now settle the blob into storage
-        settle_blob obj[primary].digest, tmp, mtime: obj.mtime
-      else
-        tmp.close
-        tmp.unlink
-
-        # warn "got here lolol"
-
-        # eh just do this
-        obj = get obj
-        obj.fresh = false # object is not fresh since we already have it
-      end
-
-      obj
+      # a metadata record is considered a tombstone if it has a dtime
+      # at all if it's an ordinary entry, and in the past if it's cache
+      tombstone || !deleted?(h)
     end
   end
 
-  # Retrieve an object from the store.
+  # Retrieve an entry from the store.
   #
-  # @param obj [URI, Store::Digest::Entry]
+  # @note I'm not sure why you would want to `#get` an entry that you
+  #  already had, but you can.
+  #
+  # @param obj [URI::NI, Array<URI::NI>, Hash{Symbol=>URI::NI},
+  #  Store::Digest::Entry] some means of resolving an entry
   #
   # @return [Store::Digest::Entry, nil]
-  def get obj
-    transaction readonly: true do
-      obj = coerce_object obj
-      if h = get_meta(obj) # bail if this does not exist
-        b = get_blob h[:digests][primary].digest # may be nil
-        Store::Digest::Entry.new b, **h
-      end
+  #
+  def get obj, tombstone: false
+    uri = coerce_uri obj
+
+    if hash = get_raw(uri, tombstone: tombstone)
+      Store::Digest::Entry.new(nil, store: self) { hash }
     end
   end
 
   # Remove an object from the store, optionally "forgetting" it ever existed.
-  # @param obj
-  def remove obj, forget: false
-    obj  = coerce_object obj
-    unless obj.scanned?
-      raise ArgumentError,
-        'Cannot scan object because there is no content' unless obj.content?
-      obj.scan digests: algorithms, blocksize: 2**20
-    end
+  #
+  # @param entry [URI::NI, Store::Digest::Entry] the hash address of
+  #  an entry, or an entry object itself
+  # @param tombstone [false, true] whether to return "tombstone"
+  #  metadata records of deleted entries
+  # @param forget [false, true] whether to delete the metadata or just
+  #  mark it as deleted
+  #
+  # @return [Store::Digest::Entry, nil]
+  #
+  def remove obj, tombstone: false, forget: false
+    uri = coerce_uri obj
+    rm  = forget ? :forget : true
 
-    # remove or mark metadata entry as deleted and remove blob
-    transaction do
-      if meta = forget ? remove_meta(obj) : mark_meta_deleted(obj)
-        if blob = remove_blob(meta[:digests][primary].digest)
-          Store::Digest::Entry.new blob, **meta
-        end
-      end
+    if hash = get_raw(uri, tombstone: tombstone, remove: rm)
+      Store::Digest::Entry.new(nil) { hash }
     end
   end
 
@@ -305,11 +375,22 @@ class Store::Digest
     remove obj, forget: true
   end
 
+  # Determine if the store is cache-aware.
+  #
+  # @return [false, true]
+  #
+  def can_cache?
+    respond_to? :cache_ttl
+  end
+
   # Return statistics on the store
   def stats
     Stats.new(**meta_get_stats)
   end
 
+  # This class represents a set of rudimentary statistics for the
+  # contents of the store.
+  #
   class Stats
     private
 
