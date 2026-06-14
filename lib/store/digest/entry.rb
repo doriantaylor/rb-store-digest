@@ -3,7 +3,7 @@ require 'store/digest/error'
 
 require 'uri'
 require 'uri/ni'
-require 'mimemagic'
+require 'mimemagic-dorian'
 
 # This class represents an entry in the content-addressable store.
 #
@@ -45,12 +45,11 @@ class Store::Digest::Entry
   # These is a struct for the bank of flags, with a couple of extra
   # methods for parsing
   #
-  Flags = Struct.new(
-    'Flags', :type_checked, :type_valid, :charset_checked, :charset_valid,
-    :encoding_checked, :encoding_valid, :syntax_checked, :syntax_valid, :cache
-  ) do |cls|
+  Flags = Struct.new('Flags', :type_checked, :type_valid, :charset_checked,
+                     :charset_valid, :encoding_checked, :encoding_valid,
+                     :syntax_checked, :syntax_valid, :cache) do
 
-    class << cls
+    class << self
       # Initialize a struct of flags from arbitrary input
       #
       # @param arg [Store::Digest::Entry::Flags, Integer, #to_h, #to_a]
@@ -162,7 +161,19 @@ class Store::Digest::Entry
   FLAG      = %i[content-type charset content-encoding syntax].freeze
   STATE     = %i[unverified invalid recheck valid].freeze
 
-  def coerce_time t, k
+  def coerce_nn_int i
+    case i
+    when nil then 0
+    when Numeric
+      raise ArgumentError, 'size must be non-negative' if i < 0
+      i.to_i
+    else
+      raise TypeError, 'size must be nil or Numeric'
+    end
+  end
+
+  #
+  def coerce_time t, k = nil
     case t
     when nil then nil
     when Time then t
@@ -173,7 +184,7 @@ class Store::Digest::Entry
         "#{k} given as Integer must be non-negative" if t < 0
       Time.at t
     else
-      raise ArgumentError, "Invalid type for #{k}: #{t.class}"
+      raise TypeError, "Invalid type for #{k}: #{t.class}"
     end
   end
 
@@ -181,7 +192,247 @@ class Store::Digest::Entry
     t = t.to_s.strip.downcase
     pat, norm = TOKENS[k]
     raise "#{k} #{t} does not match #{pat}" unless m = pat.match(t)
-    norm.call m[1]
+    norm.call m.captures.first
+  end
+
+  def coerce_digests digests, empty: false, normative: nil
+    # we just sneak in the instance's algorithms
+    self.class.coerce_digests digests, algorithms: algorithms,
+      empty: empty, normative: normative
+  end
+
+  CACHE_TTL = 86400
+
+  def compute_cache cache
+    return unless cache
+    if cache.is_a? Numeric
+      # cache dtime should be relative to metadata parameter change time
+      @ptime + cache
+    elsif cache.is_a? Time
+      cache
+    elsif cache.respond_to? :to_time
+      cache.to_time
+    else
+      (@store ? @store.cache_ttl : CACHE_TTL)
+    end
+  end
+
+  # Returns metadata without calling the accessors and triggering a
+  # scan.
+  #
+  # @return [Hash] the current set of metadata
+  #
+  def meta_hash content: false, store: false
+    keys = %i[digests size ctime mtime ptime dtime
+              flags type charset encoding language]
+    keys.unshift :store   if store && @store
+    keys.unshift :content if content && @content
+
+    keys.each_with_object({}) do |k, h|
+      v = "@#{k}"
+      h[k] = instance_variable_get(v) if instance_variable_defined?(v)
+    end
+  end
+
+  # Merge a metadata hash into the object.
+  #
+  # @param hash [Hash{Symbol=>Object}]
+  #
+  # @raise [Store::Digest::Error::Integrity]
+  #
+  # @return [void]
+  #
+  def merge_meta hash, content: false
+    # do itt
+    @content = hash[:content] if content and hash[:content]
+
+    # check the byte size
+    if hash[:size]
+      s = coerce_nn_int hash[:size]
+      raise Store::Digest::Error::Integrity,
+        "Scanned size #{s} does not match asserted #{@size}" if
+        @size and s != @size
+      @size = s
+    end
+
+    # check the digests
+    if hash[:digests]
+      digests = coerce_digests(hash[:digests], normative: true)
+      (@digests.keys & digests.keys).each do |k|
+        scanned  = digests[k]
+        asserted = @digests[k]
+        raise Store::Digest::Error::CryptographicIntegrity,
+          "Scanned digest #{scanned} does not match asserted #{asserted}" if
+          scanned != asserted
+      end
+
+      # make sure wee also do the algorithms for parity
+      @digests    = digests.transform_values(&:freeze).freeze
+      @algorithms = digests.keys.to_set.freeze
+    end
+
+    # only update the type if it's more specific than the asserted one
+    if hash[:type]
+      t = coerce_token hash[:type], :type
+
+      # warn "#{@type.inspect} -> #{t.inspect}"
+
+      @type = (t.canonical || t) unless @type and !t.descendant_of?(@type)
+      # @type = (t.canonical || t) if !@type || t.descendant_of?(@type)
+    end
+
+    %i[charset encoding language].each do |key|
+      val = coerce_token(hash[key], key).freeze if hash[key]
+      # note the distinction
+      instance_variable_set("@#{key}", val) if hash.key? key
+    end
+
+    # mtime is special
+    if hash[:mtime]
+      # XXX TODO preserve older newer
+      @mtime = coerce_time hash[:mtime], :mtime
+    end
+
+    %i[ctime ptime dtime].each do |key|
+      val = coerce_time(hash[key], key).freeze if hash[key]
+      # again note the distinction
+      instance_variable_set("@#{key}", val) if hash.key? key
+    end
+
+    # finally we do the flags
+    @flags = Flags.from(hash[:flags]) if hash[:flags]
+
+    nil
+  end
+
+  # this is to swtich the content over
+  #
+  def dereference?
+    @content = @content.call if @content.respond_to? :call
+  end
+
+  def seekable? io
+    return false unless io.respond_to? :seek
+    begin
+      # this should be a noop
+      io.seek 0, IO::SEEK_CUR
+      true
+    rescue Errno::ESPIPE, Errno::EINVAL
+      false
+    end
+  end
+
+  public
+
+  # Create a new object, naively recording whatever is handed
+  #
+  # @note use {.scan} or {#scan} to populate
+  #
+  # @param content [IO, String, Proc, File, Pathname, ...] some content
+  # @param store [Store::Digest] the associated store, if present
+  # @param digests [Hash] the digests ascribed to the content
+  # @param type [String] assert the object's MIME type
+  # @param charset [String] the character set, if applicable
+  # @param language [String] the (RFC5646) language tag, if applicable
+  # @param encoding [String] the content-encoding (e.g. compression)
+  # @param mtime [Time] assert object modification time
+  # @param flags [Integer, Flags] validation state flags
+  # @param strict [true, false] raise an error on bad input
+  #
+  # @return [Store::Digest::Entry] the object in question
+  #
+  def initialize content = nil, store: nil, digests: nil, mtime: nil,
+      type: nil, charset: nil, encoding: nil, language: nil, flags: 0,
+      cache: false, strict: false, scan: false, &block
+
+    # set the associated store, if one is passed in
+    if store
+      raise 'Store must be an instance of Store::Digest' unless
+        store.is_a? Store::Digest
+      @store = store
+    end
+
+
+    now = Time.now
+    @mtime   = mtime || now
+    @digests = {}
+    @scanned = false
+
+    if content
+      # this will give us something suitable to scan or it'll bail
+      @content = Store::Digest::ReadWrapper.coerce content,
+        thunk: true if content
+
+      if !type and @content.respond_to?(:path) and path = @content.path
+        type = MimeMagic.by_path(@content.path)
+      end
+    end
+
+    type ||= MimeMagic[nil]
+
+    # the following can be strings or symbols:
+    b = binding
+    TOKENS.keys.each do |k|
+      if x = b.local_variable_get(k)
+        x = if strict
+              coerce_token(x, k)
+            else
+              coerce_token(x, k) rescue nil
+            end
+        instance_variable_set "@#{k}", x.freeze if x
+      end
+    end
+
+    # warn "wtf #{@type.inspect}"
+
+    # we let the empty through
+    digests = coerce_digests digests, empty: true
+    if digests.is_a? Hash
+      @digests    = digests
+      @algorithms = digests.empty? ? algorithms : digests.keys.to_set
+      @scanned    = !digests.empty?
+    elsif !digests.empty?
+      @algorithms = digests.to_set
+    end
+
+    # we use this for `#get`
+    if block
+      hash = block.call @content
+
+      raise TypeError,
+        "Block return value must be Hash, not #{hash.class}" unless
+        hash.is_a? Hash
+      #
+      @scanned = true if hash[:digests]
+      merge_meta hash, content: true
+    elsif @content.nil?
+      raise ArgumentError,
+        'Must initialize with either content, or a block, or both'
+    end
+
+    # just make sure the times
+    @ctime ||= now
+    @mtime ||= mtime || @ctime
+    @ptime ||= @ctime
+
+    # set the flags
+    @flags ||= Flags.from(flags || 0)
+    if cache
+      raise NotImplementedError, 'Associated store does not support caching' if
+        @store and !@store.can_cache?
+      @flags.cache = !!cache
+      @dtime = compute_cache cache
+    end
+
+    # scan preemptively if so directed
+    scan! if scan
+  end
+
+  attr_reader :store, :type, :charset, :language, :encoding,
+    :ctime, :mtime, :ptime, :dtime, :flags
+
+  TOKENS.keys.each do |key|
+    define_method("#{key}=") { |val| coerce_token val, key }
   end
 
   # This will take an array or hash or individual symbol or string or
@@ -238,7 +489,9 @@ class Store::Digest::Entry
   #
   # @return [Array<Symbol>,Hash{Symbol=>URI::NI}]
   #
-  def coerce_digests digests, empty: false, normative: nil
+  def self.coerce_digests digests, algorithms: nil, empty: false, normative: nil
+    algorithms ||= URI::NI.algorithms
+
     # handle nil
     digests = [] if digests.nil?
 
@@ -246,17 +499,15 @@ class Store::Digest::Entry
     digests = [digests] unless digests.respond_to? :to_a
 
     raise ArgumentError,
-      'Digest list can\'t be empty' if !empty and digest.empty?
+      'Digest list can\'t be empty' if !empty and digests.empty?
 
     if digests.is_a? Hash
-      # get this once so we don't loop it
-      algos = algorithms
-
-      return digests.map do |k, v|
+      out = digests.map do |k, v|
         # keys must go to symbols; symbols must be valid
         k = k.to_s.downcase.to_sym unless k.is_a? Symbol
         raise ArgumentError,
-          "#{k} is not a supported algorithm" unless algos.include? k
+          "#{k} is not a supported algorithm in this configuration" unless
+          algorithms.include? k
 
         # this should raise on any invalid values
         v = URI::NI.ingest k, v
@@ -266,6 +517,10 @@ class Store::Digest::Entry
 
         [k, v]
       end.to_h
+
+      # note we are explicitly looking to see if normative is false
+      # rather than nil
+      return normative == false ? out.keys : out
     end
 
     # otherwise it should be an array so we'll make it into a set
@@ -285,137 +540,29 @@ class Store::Digest::Entry
       end
     end.uniq
 
-    # if these are all digest URIs then this is normative; return as a hash
-    return digests.map do |d|
-      raise ArgumentError,
-        "#{d} is not a supported algorithm" unless algos.include? d.algorithm
+    if digests.all? { |d| d.is_a? URI::NI }
+      # we are expressly asking for anticipative if normative is literally false
+      return digests.map(&:algorithm) if normative == false
 
-      [d.algorithm.to_sym, d]
-    end.to_h if digests.all? { |d| d.is_a? URI::NI }
+      # otherwise if these are all digest URIs then this is normative;
+      # return as a hash
+      return digests.map do |d|
+        raise ArgumentError,
+          "#{d} is not a supported algorithm" unless
+          algorithms.include? d.algorithm
 
+        [d.algorithm.to_sym, d]
+      end.to_h
+    elsif digests.all? { |d| d.is_a? Symbol }
+      raise ArgumentError, 'Normative expressly normative' if normative
+
+      return digests
+    end
+
+    # if we get here, it's an error
     raise ArgumentError,
-      'Input must coerce to either all URIs or all Symbols' unless
-      digests.all? { |d| d.is_a? Symbol }
-
-    digests
+      'Input must coerce to either all URIs or all Symbols'
   end
-
-  public
-
-  # Create a new object, naively recording whatever is handed
-  #
-  # @note use {.scan} or {#scan} to populate
-  #
-  # @param content [IO, String, Proc, File, Pathname, ...] some content
-  # @param store [Store::Digest] the associated store, if present
-  # @param digests [Hash] the digests ascribed to the content
-  # @param size [Integer] assert the object's size
-  # @param type [String] assert the object's MIME type
-  # @param charset [String] the character set, if applicable
-  # @param language [String] the (RFC5646) language tag, if applicable
-  # @param encoding [String] the content-encoding (e.g. compression)
-  # @param ctime [Time] assert object creation time
-  # @param mtime [Time] assert object modification time
-  # @param ptime [Time] assert object metadata parameter modification time
-  # @param dtime [Time] assert object deletion time
-  # @param flags [Integer, Flags] validation state flags
-  # @param strict [true, false] raise an error on bad input
-  #
-  # @return [Store::Digest::Entry] the object in question
-  #
-  def initialize content = nil, store: nil, digests: nil, strict: false,
-      size: 0, mtime: nil, type: MimeMagic[nil], charset: nil, language: nil,
-      encoding: nil, flags: 0, ctime: nil, ptime: nil, dtime: nil, cache: false
-
-    # set the associated store, if one is passed in
-    if store
-      raise 'Store must be an instance of Store::Digest' unless
-        store.is_a? Store::Digest
-      @store = store
-    end
-
-    # this will give us something suitable to scan or it'll bail
-    @content = Store::Digest::ReadWrapper.coerce content, thunk: true
-
-    # we let the empty through
-    digests = coerce_digests digests, empty: true
-    if digests.is_a? Hash
-      @digests    = digests
-      @algorithms = digests.keys.to_set
-      @scanned    = !digests.empty?
-    else
-      @digests    = {}
-      @algorithms = digests.to_set
-      @scanned    = false
-    end
-
-    # override with defaults if this ends up being empty
-    @algorithms = (@store ? @store.algorithms : URI::NI.algorithms) if
-      @algorithms.empty?
-
-    # ctime, mtime, ptime, dtime should be all nil or nonnegative
-    # integers or Time or DateTime
-    b = binding
-    %i[ctime mtime ptime dtime].each do |k|
-      v = coerce_time(b.local_variable_get(k), k)
-      instance_variable_set "@#{k}", v
-    end
-
-    # just make sure 
-    @ctime ||= Time.now
-    @mtime ||= @ctime
-    @ptime ||= @ctime
-
-    # set the flags
-    @flags = Flags.from(flags || 0)
-    if cache
-      raise NotImplementedError, 'Associated store does not support caching' if
-        @store and !@store.can_cache?
-      @flags.cache = !!cache
-      if cache.is_a? Numeric
-        # cache dtime should be relative to metadata parameter change time
-        @dtime = @ptime + cache
-      elsif cache.is_a? Time
-        @dtime = cache
-      else
-        # 
-        @dtime = cache + (@store ? @store.cache_ttl : 86400)
-      end
-    end
-
-    # XXX size will be initialized to zero if not explicitly set but a
-    # call to the accessor will kick off a scan, so it doesn't
-    # actually matter; in fact arguably if it *isn't* zero that
-    # implies that we are in the verifying modality, but a nonzero
-    # size and an empty digest set should be an error
-    @size = case size
-            when nil then 0
-            when Numeric
-              raise ArgumentError, 'size must be non-negative' if size < 0
-              size.to_i
-            else
-              raise ArgumentError, 'size must be nil or Numeric'
-            end
-
-    # the following can be strings or symbols:
-    TOKENS.keys.each do |k|
-      if x = b.local_variable_get(k)
-        x = if strict
-              coerce_token(x, k)
-            else
-              coerce_token(x, k) rescue nil
-            end
-        instance_variable_set "@#{k}", x.freeze if x
-      end
-    end
-
-    # scan preemptively if so directed
-    scan! if scan
-  end
-
-  # XXX come up with a policy for these that isn't stupid, plus input sanitation
-  attr_accessor :type, :charset, :language, :encoding,
-    :ctime, :mtime, :ptime, :dtime, :flags
 
   # Scan a blob and return the digests and byte count.
   #
@@ -529,7 +676,13 @@ class Store::Digest::Entry
 
     # set the store unless we already have one
     @store ||= store
-    hash = store.add_raw(@content, **metadata_hash)
+
+    # doyy obviously we need to do this
+    rewind if scanned?
+
+    # ok add the thing
+    hash = store.send :add_raw, @content, **meta_hash
+    merge_meta hash, content: true
 
     self
   end
@@ -574,10 +727,10 @@ class Store::Digest::Entry
   #
   def self.scan content, store: nil, digests: URI::NI.algorithms, mtime: nil,
       type: nil, language: nil, charset: nil, encoding: nil,
-      blocksize: BLOCKSIZE, , &block
+      blocksize: BLOCKSIZE, &block
     self.new content, store: store, digests: digests, mtime: mtime,
       type: type, language: language, charset: charset, encoding: encoding,
-      blocksize: blocksize, strict: strict, scan: true, &block
+      scan: blocksize, &block
   end
 
   # Scan the blob if it hasn't already been scanned (idempotent).
@@ -603,8 +756,10 @@ class Store::Digest::Entry
 
     if @store
       # we use the store if one is associated
-      hash = @store.add_raw @content, **metadata_hash
-    elsif @content.respond_to? :rewind
+      hash = @store.send :add_raw, @content, **meta_hash
+
+      @content = hash[:content]
+    elsif @content.respond_to? :rewind and seekable?(@content)
       # we don't need a temporary file; we'll just reuse this file handle
       @content.rewind
       hash = self.class.scan_raw @content, algorithms: @algorithms, type: true
@@ -658,10 +813,7 @@ class Store::Digest::Entry
       # XXX also do content type??
     end
 
-    # do all the metadata assignments
-    hash.slice(:digests, :size, :type).each do |k, v|
-      instance_variable_set "@#{k}", v
-    end
+    merge_meta hash
 
     # unconditionally set this now
     @scanned = true
@@ -677,114 +829,16 @@ class Store::Digest::Entry
     !!@scanned
   end
 
-  def scan content = nil, into = nil, digests: URI::NI.algorithms, mtime: nil,
-      type: nil, charset: nil, language: nil, encoding: nil,
-      blocksize: BLOCKSIZE, strict: true, fresh: nil, &block
-    # update freshness if there is something to update
-    @fresh = !!fresh unless fresh.nil?
-    # we put all the scanning stuff in here
-    content = case content
-              when nil          then self.content
-              when IO, StringIO then content
-              when String       then StringIO.new content
-              when Pathname     then content.open('rb')
-              when Proc
-                if content.arity == 0
-                  content.call
-                else
-                  x = StringIO.new
-                  content.call x
-                  x
-                end
-              when -> x { %i[read seek pos].all? { |m| x.respond_to? m } }
-                content
-              else
-                raise ArgumentError,
-                  "Cannot scan content of type #{content.class}"
-              end
-    content.binmode if content.respond_to? :binmode
-
-    # sane default for mtime
-    @mtime = coerce_time(mtime || @mtime ||
-                         (content.respond_to?(:mtime) ? content.mtime : Time.now(in: ?Z)), :mtime)
-
-    # eh, *some* code reuse
-    b = binding
-    TOKENS.keys.each do |k|
-      if x = b.local_variable_get(k)
-        x = if strict
-              coerce_token(x, k)
-            else
-              coerce_token(x, k) rescue nil
-            end
-        instance_variable_set "@#{k}", x.freeze if x
-      end
-    end
-
-    digests = case digests
-              when Array  then digests
-              when Symbol then [digests]
-              else
-                raise ArgumentError, 'Digests must be one or more symbol'
-              end
-    raise ArgumentError,
-      "Invalid digest list #{digests - URI::NI.algorithms}" unless
-      (digests - URI::NI.algorithms).empty?
-
-    # set up the contexts
-    digests = digests.map { |d| [d, URI::NI.context(d)] }.to_h
-
-    # sample for mime type checking
-    sample = StringIO.new ''
-    @size  = 0
-    while buf = content.read(blocksize)
-      @size += buf.size
-      sample << buf if sample.pos < SAMPLE
-      digests.values.each { |ctx| ctx << buf }
-      block.call buf if block
-    end
-
-    # seek the content back to the front and store it
-    content.seek 0, 0
-    @content = content
-
-    # set up the digests
-    @digests = digests.map do |k, v|
-      [k, URI::NI.compute(v, algorithm: k).freeze]
-    end.to_h.freeze
-
-    # ensure there is the most generic of possible types
-    type ||= 'application/octet-stream'.freeze
-
-    # obtain the sampled content type
-    ts = MimeMagic.by_magic(sample) || MimeMagic.default_type(sample)
-    if content.respond_to? :path
-      # may as well use the path if it's available and more specific
-      ps = MimeMagic.by_path(content.path.to_s)
-      # XXX the need to do ts.to_s is a bug in mimemagic
-      ts = ps if ps and ps.descendant_of?(ts.to_s)
-    end
-
-    # set the type to ts if it is more specific
-    @type = ts.descendant_of?(type.to_s) ? ts.to_s.freeze :
-      type.to_s.dup.downcase.freeze
-
-    self
-  end
-
   # Iterate over the blob contents.
   #
   # @yieldparam chunk [String] the chunk of blob
   #
   # @return [self]
   #
-  def each sep = $/, chomp = false, &block
-    # each is 
-    while buf = gets(sep, chomp)
-      block.call buf
-    end
-
-    self
+  def each sep = $/, limit = nil, chomp: false, &block
+    scan
+    dereference?
+    @content.each(sep, limit, chomp: chomp, &block)
   end
 
   # Emulate {IO#read}.
@@ -795,7 +849,7 @@ class Store::Digest::Entry
   #
   def read length = nil, buffer = nil
     scan
-
+    dereference?
     # this should be set by scan
     @content.read length, buffer
   end
@@ -806,27 +860,29 @@ class Store::Digest::Entry
   #
   def gets sep = $/, chomp = false
     scan
-
+    dereference?
     @content.gets sep, chomp
   end
 
   def seek offset, whence = IO::SEEK_SET
     scan
-
+    dereference?
     @content.seek offset, whence
   end
 
   def pos
     scan
+    dereference?
     @content.pos
   end
 
+  alias_method :tell, :pos
+
   def pos= position
     scan
+    dereference?
     @content.pos = position
   end
-
-  alias_method :tell, :pos
 
   # Emulate {IO#rewind}.
   #
@@ -834,13 +890,16 @@ class Store::Digest::Entry
   #
   def rewind
     scan
+    dereference?
 
+    # content should be rewindable after a scan
     @content.rewind
   end
 
   # No-op of {IO#open} for parity.
   #
-  # @note Once the blob is scanned, an internal file handle is opened and stays open
+  # @note Once the blob is scanned, an internal file handle is opened
+  #  and stays open.
   #
   # @return [self]
   #
@@ -868,10 +927,6 @@ class Store::Digest::Entry
     @store.has?(digests) if @store
   end
 
-  def store
-    @store
-  end
-
   # Return the algorithms used in the object.
   #
   # @return [Array]
@@ -880,11 +935,14 @@ class Store::Digest::Entry
     @algorithms ||= (@store || URI::NI).algorithms.to_set
   end
 
+  #
   def digests
     scan
     @digests
   end
 
+  # 
+  #
   def size
     scan
     @size
@@ -939,6 +997,10 @@ class Store::Digest::Entry
   #
   def scanned?
     !@digests.empty?
+  end
+
+  def flags= val
+    @flags = Flags.from val
   end
 
   # Returns whether the object is cache.

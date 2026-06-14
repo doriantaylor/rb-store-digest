@@ -3,7 +3,29 @@ require 'store/digest/driver'
 require 'store/digest/entry'
 
 # This is a general-purpose content-addressable store that interfaces
-# via RFC6920 addresses.
+# via [RFC6920](https://datatracker.ietf.org/doc/html/rfc6920) addresses.
+#
+# Since a content-addressable store traffics in immutable blobs of
+# bytes, the main interface is remarkably terse:
+#
+# * {#add} a blob-like object or existing {Store::Digest::Entry},
+# * {#get} an entry from the store (if it exists), if you know one of
+#   its hash URIs,
+# * or, {#remove} it.
+#
+# {Store::Digest} scans and stores multiple digest algorithms at once,
+# since clients may only have a hash for a blob in a particular
+# algorithm, and individual algorithms may get compromised from time
+# to time. The set of algorithms is configurable, and fixed for each
+# store instance when it is created.
+#
+# The currency of {Store::Digest}, then, is the {URI::NI} and the
+# {Store::Digest::Entry}. There is also {Store::Digest::ReadWrapper},
+# a small helper class capable of coercing non-IO-like objects
+# (particulary those which one might find in a {Rack} message body)
+# into something that behaves enough like an {IO} blob that it can be
+# scanned. {Store::Digest::Entry} objects also masquerade as blobs
+# with additional metadata.
 #
 class Store::Digest
   private
@@ -49,23 +71,41 @@ class Store::Digest
     obj
   end
 
+  # Squeeze a digest URI (or several) out of the input, if possible.
+  #
+  # @param obj [URI::NI, Array<URI::NI>, Hash{Symbol=>URI::NI},
+  #  Store::Digest::Entry] the thing to get URIs from
+  # @param select [false, true] whether to pick the "best" URI from a
+  #  set or hash thereof
   #
   # @raise [ArgumentError] if the URIs can't be coerced
   #
-  # @return [URI::NI, Array<URI::NI>]
+  # @return [URI::NI, Hash{Symbol=>URI::NI}]
   #
   def coerce_uri obj, select: true
     if obj.is_a? Store::Digest::Entry
       digests = obj.digests
+
+      # this shouldn't happen but you never know
       raise ArgumentError, 'Digest list is empty' if digests.empty?
     else
-      # this can also raise
+      # this can also raise if it fails to coerce
       digests = Store::Digest::Entry.coerce_digests obj, normative: true
     end
 
-    if select
-
+    # we should have a hash at this point
     return digests.values unless select
+
+    # if we have this then return it
+    return digests[primary] if digests.key? primary
+
+    # grab this
+    lengths = URI::NI.lengths
+
+    # just pick the longest one i guess
+    digests.slice(*lengths.keys).values.sort do |a, b|
+      lengths[b.algorithm] <=> lengths[a.algorithm]
+    end.first
   end
 
   # From a metadata hash, determine if the entry is cache.
@@ -112,8 +152,8 @@ class Store::Digest
     end
 
     transaction readonly: remove do
-      if meta = send(:mm, uri)
-        if blob = send(:bm, meta[:digests][primary].digest)
+      if meta = send(mm, uri)
+        if blob = send(bm, meta[:digests][primary].digest)
           meta.merge content: blob
         elsif tombstone
           meta
@@ -129,33 +169,40 @@ class Store::Digest
   #
   def add_raw content, **params
     # slice out the subset
-    params.slice! :type, :charset, :language, :encoding, :mtime, :cache
+    params = params.slice :type, :charset, :language, :encoding, :mtime, :cache
     # this will automatically coerce nil to application/octet-stream
     params[:type] = MimeMagic[params[:type]]
     # add a modification time if missing
-    params[:mtime] ||= Time.now
+    mtime = params[:mtime] ||= Time.now
+
+    # managed temporary file handle
+    tmp = temp_blob
+
+    # get the basic scannable values (digests, size, type)
+    scanned = Entry.scan_raw(
+      content, algorithms: algorithms,
+      blocksize: blocksize, type: true) { |buf| tmp << buf }
+
+    # remove the scanned type if it is less specific than supplied
+    scanned.delete(:type) if params[:type] &&
+      !scanned[:type].descendant_of?(params[:type])
+
+    # now merge the scanned params into the supplied ones
+    params.merge! scanned
 
     transaction do
-      # managed temporary file handle
-      tmp = temp_blob
 
-      # get the basic scannable values (digests, size, type)
-      scanned = Entry.scan_raw(
-        content, algorithms: algorithms,
-        blocksize: blocksize, type: true) { |buf| tmp << buf }
+      # warn "asserted: #{params[:type]} -> scanned: #{scanned[:type]} #{scanned[:type].descendant_of?(params[:type])}"
 
-      # remove the scanned type if it is less specific than supplied
-      scanned.delete(:type) if params[:type] and
-        !scanned[:type].descendant_of?(params[:type])
-
-      # now merge the scanned params into the supplied ones
-      params.merge! scanned
+      # warn params.inspect
 
       # replace the content with the settled blob
       content = settle_blob params[:digests][primary].digest, tmp, mtime: mtime
 
       # `set_meta` returns nil if unchanged
-      meta = set_meta(params, preserve: preserve) || params
+      meta = set_meta(params) || params
+
+      # warn meta.inspect
 
       # return the hash with the content
       meta.merge(content: content)
@@ -234,10 +281,10 @@ class Store::Digest
   #
   def initialize driver: Store::Digest::Driver::LMDB,
       blocksize: 2**16, mtimes: :preserve, **options
-    driver = ||= Store::Digest::Driver::LMDB
+    driver ||= Store::Digest::Driver::LMDB
 
     @blocksize = blocksize
-    @mtimes == mtimes || :preserve
+    @mtimes = mtimes || :preserve
 
     unless driver.is_a? Module
       # coerce to symbol
@@ -252,9 +299,10 @@ class Store::Digest
       "Driver #{driver} is not a Store::Digest::Driver" unless
       driver.ancestors.include? Store::Digest::Driver
 
+    # bolt the driver onto the instance
     extend driver
 
-    #
+    # aaaand bootstrap it
     setup(**options)
   end
 
@@ -285,25 +333,24 @@ class Store::Digest
   # @param language [String] the language, if applicable
   # @param encoding [String] the encoding (eg compression) if applicable
   # @param mtime [Time] the modification time, if not "now"
-  # @param strict [true, false] strict checking on metadata input
-  # @param preserve [false, true] preserve modification time if the
-  #  object already exists in the store
   # @param cache [false, true, Numeric, Time] whether the object should be
   #  treated as cache, and/or when to evict it
+  # @param scan [false, true] eagerly scan the contents
   #
   # @return [Store::Digest::Entry] The (potentially pre-existing) entry
   #
-  def add obj, digests: nil, type: nil, charset: nil, language: nil,
-      encoding: nil, mtime: nil, cache: false, scan: false
+  def add obj, digests: nil, mtime: nil, type: nil, charset: nil,
+      encoding: nil, language: nil, cache: false, scan: false
 
     # XXX this circumvents the integrity check
     return obj.add(self) if obj.is_a? Store::Digest::Entry
 
-    Store::Digest::ReadWrapper.assert! obj
+    raise ArgumentError, 'entry can\'t be nil' if obj.nil?
 
-    Store::Digest::Entry.new obj, store: self, digests: digests,
-      type: type, charset: charset, language: language, encoding: encoding,
-      mtime: mtime, cache: cache, scan: scan
+    # turducken-ass call graph lol
+    Store::Digest::Entry.new obj, store: self, digests: digests, mtime: mtime,
+      type: type, charset: charset, encoding: encoding, language: language,
+      cache: cache, scan: scan
   end
 
   # Returns true if the entry is in the store.
@@ -344,7 +391,7 @@ class Store::Digest
     uri = coerce_uri obj
 
     if hash = get_raw(uri, tombstone: tombstone)
-      Store::Digest::Entry.new(nil, store: self) { hash }
+      Store::Digest::Entry.new(store: self) { hash }
     end
   end
 
@@ -364,7 +411,7 @@ class Store::Digest
     rm  = forget ? :forget : true
 
     if hash = get_raw(uri, tombstone: tombstone, remove: rm)
-      Store::Digest::Entry.new(nil) { hash }
+      Store::Digest::Entry.new { hash }
     end
   end
 

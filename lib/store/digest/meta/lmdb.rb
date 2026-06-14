@@ -1004,7 +1004,7 @@ module Store::Digest::Meta::LMDB
       # this is a private method so we can control what its inputs are
       # but it *should* map to a URI::NI; string hashes are too ambiguous
       uri = obj[algo.to_sym]
-      raise ArgumentError, "Unexpected #{uri.class}" unless uri.is_a? URI::NI
+      raise TypeError, "Unexpected #{uri.class}" unless uri.is_a? URI::NI
 
       # now return the pointer (or nil)
       out = @dbs[algo.to_sym][uri.digest] or return
@@ -1043,15 +1043,20 @@ module Store::Digest::Meta::LMDB
 
     # Persist the metadata for a {Store::Digest::Entry}.
     #
-    # @param obj [Store::Digest::Entry]
+    # @param obj [Store::Digest::Entry, Hash]
     #
     # @return [void]
     #
-    def set_meta obj, preserve: false
+    def set_meta obj
+      # hashify
+      obj = obj.to_h
+
+      # lols
+      preserve = mtimes == :preserve
       # check if the object has all the hashes
       raise ArgumentError,
         'Object does not have a complete set of digests' unless
-        (algorithms - obj.algorithms).empty?
+        (algorithms - obj[:digests].keys).empty?
 
       # since nothing changes in a content-addressable store by
       # definition, the only meaningful changes involve adding
@@ -1167,7 +1172,7 @@ module Store::Digest::Meta::LMDB
           # set the algo mappings
           algorithms.each do |algo|
             # warn "setting #{algo} -> #{obj[algo].hexdigest}"
-            @dbs[algo].put? obj[algo].digest, ptr
+            @dbs[algo].put? obj[:digests][algo].digest, ptr
           end
 
           # set the indices

@@ -72,7 +72,7 @@ module Store::Digest::Blob::FileSystem
   #
   # @return [Proc] a lambda that returns a read handle
   #
-  def settle_blob bin, fh, mtime: nil, overwrite: false
+  def settle_blob bin, fh, mtime: nil, overwrite: false, direct: false
     # get the mtimes
     mtime ||= Time.now
     mtime = case mtime
@@ -105,7 +105,7 @@ module Store::Digest::Blob::FileSystem
     end
 
     # return a proc that returns the open file handle
-    -> { target.open 'rb' }
+    direct ? target.open('rb') : -> { target.open 'rb' }
   end
 
   # Return a blob filehandle (or closure that will return said blob).

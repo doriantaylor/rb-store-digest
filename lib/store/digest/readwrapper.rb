@@ -1,6 +1,7 @@
 require 'store/digest/version'
 
 require 'thread'
+require 'stringio'
 
 # This class is an attempt to normalize input so that it can be
 # {#read} like an IO handle. Use the class method {.coerce} to
@@ -38,13 +39,14 @@ class Store::Digest::ReadWrapper
 
   public
 
-  def self.assert! obj, thunk: false
-    return true if obj.is_a?(self) || quacks?(obj) || obj.respond_to?(:each)
+  # XXX maybe later lol
+  # def self.assert! obj, thunk: false
+  #   return true if obj.is_a?(self) || quacks?(obj) || obj.respond_to?(:each)
 
-    if obj.respond_to?(:call)
-      elsif obj.respond.to_?
-    end
-  end
+  #   if obj.respond_to?(:call)
+  #     elsif obj.respond.to_?
+  #   end
+  # end
 
   # Attempt to coerce a suitable object or no-op.
   #
@@ -63,10 +65,15 @@ class Store::Digest::ReadWrapper
   def self.coerce obj, thunk: false
     return obj if obj.is_a? self
 
+    return obj.open('rb') if obj.is_a? Pathname
+
     return obj if quacks? obj # no need for this if it can read
 
+    return StringIO.new(obj) if obj.is_a? String
+
     # response bodies /don't do this but other stuff does
-    if obj.respond_to?(:call) and obj.method(:call).arity == 0
+    if obj.respond_to?(:arity) && obj.arity == 0 ||
+        obj.respond_to?(:call) && obj.method(:call).arity == 0
       # let the thunk through
       return obj if thunk
 
@@ -92,14 +99,20 @@ class Store::Digest::ReadWrapper
   # @raise [ArgumentError] said object is unsuitable
   #
   def initialize obj
-    if obj.respond_to? :call
+    test = obj.respond_to?(:arity) ? obj :
+      obj.respond_to?(:call) ? obj.method(:call) : nil
+
+    if test
       raise ArgumentError,
-        'Callable object needs an argument to take a write handle' if
-        obj.method(:call).arity.abs == 0
-    elsif obj.is_a? String
-      obj = [obj]
-    elsif !obj.respond_to?(:each)
-      raise ArgumentError, 'Argument must respond to #call(write_fh) or #each'
+        'Callable object is expected to take a write handle as an argument' if
+        test.arity == 0
+    elsif obj.respond_to?(:each)
+      nil
+    elsif obj.respond_to? :to_s
+      obj = [obj.to_s]
+    else
+      raise ArgumentError,
+        'Argument must respond to #call(write_fh) or #each or #to_s'
     end
 
     @done  = false

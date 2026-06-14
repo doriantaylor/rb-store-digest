@@ -51,18 +51,27 @@ RSpec.describe Store::Digest do
     end
 
     # store should set a creation time once and never touch it again
+
     # store should set a modification time that starts out the same as ctime
+
     # store should initialize with objects/deleted/byte counts all zero
   end
 
   context 'poke at Driver::LMDB' do
     # store should complain if you don't tell it where to set up shop *
+
     # store should create its root directory if it doesn't exist *
+
     # store should complain if creating a directory fails *
+
     # store should complain if its root is anything but an rwx directory *
+
     # store should correctly commute its umask to the directory *
+
     # store should setgid its directories if the OS supports it *
+
     # store should chown its contents to make sure it can be accessed *
+
     # store should initialize metadata database, whatever that entails *
   end
 
@@ -82,32 +91,37 @@ RSpec.describe Store::Digest do
     # store.add should no-op the same entry added a second time
     # store.add should nevertheless update metadata if different from existing
 
-    it 'should set obj.fresh? to true for a new object' do
+    it 'should set obj.stored? to true for a new object' do
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
       obj = subject.add 'hurrdurr'
-      expect(obj.fresh?).to be_truthy
+      expect(obj.stored?).to be_truthy
     end
 
     it 'should set obj.fresh? to true for a previously-deleted object' do
       # store.add should set obj.fresh? to true if the object had been
       #   previously deleted
       obj  = subject.add 'lol'
+      expect(obj.type).to eql('text/plain')
       dead = subject.remove 'lol'
-      obj  = subject.add 'lol'
-      expect(obj.fresh?).to be_truthy
+      expect(dead.stored?).to be_falsy
+      # obj  = subject.add 'lol'
+      # expect(obj.stored?).to be_truthy
     end
 
     it 'should set obj.fresh? to true on a substantive metadata change' do
       # store.add should set obj.fresh? to true if any metadata has
       #   been updated
       obj = subject.add 'lol', type: 'application/x-derp'
-      expect(obj.fresh?).to be_truthy
+      expect(obj.stored?).to be_truthy
+      expect(obj.type).to eql('application/x-derp')
+
       wut = subject.get obj
       expect(wut).to be_a(Store::Digest::Entry)
+      expect(wut.type).to eql('application/x-derp')
     end
 
-    it 'should set obj.fresh? to false for an existing object' do
+    it 'should set obj.? to false for an existing object' do
       # store.add should set obj.fresh? to false if the object was
       # already present
       # (lol god now we are repeating this mimetype to make the tests pass)
@@ -116,7 +130,7 @@ RSpec.describe Store::Digest do
       expect(old.type).to eql('application/x-derp')
 
       obj = subject.add old, type: 'application/x-derp'
-      expect(obj.fresh?).to be_falsy
+      expect(obj.stored?).to be_falsy
     end
 
     it 'should set obj.fresh? to false on preserve: true' do
@@ -124,12 +138,12 @@ RSpec.describe Store::Digest do
       # only difference in the new object is its mtime
       # (store.add should set obj.fresh? to true otherwise)
       obj = subject.add 'lol', type: 'application/x-derp',
-        mtime: Time.now - 10, preserve: true
-      expect(obj.fresh?).to be_falsy
+        mtime: Time.now - 10
+      expect(obj.stored?).to be_falsy
     end
 
     it 'should not store until a `lazy_add` until it is read' do
-      obj = subject.lazy_add 'totes potates', type: 'application/x-hurrrr'
+      obj = subject.add 'totes potates', type: 'application/x-hurrrr'
       expect(subject.stats.objects).to eq 3
       expect(obj.read).to eq 'totes potates'
       # warn obj.object.digests

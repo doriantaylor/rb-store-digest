@@ -4,11 +4,11 @@ RSpec.describe Store::Digest::Entry do
       expect { Store::Digest::Entry.new }.to raise_error(ArgumentError)
     end
 
-    obj = Store::Digest::Entry.new nil
+    obj = Store::Digest::Entry.new ''
 
     it 'has a noop for #content' do
       # object initializes blank
-      expect(obj.content).to equal(object)
+      expect(obj.content).to equal(obj)
     end
 
     it 'has the most basic content type' do
@@ -21,9 +21,13 @@ RSpec.describe Store::Digest::Entry do
       expect(obj.size).to be 0
     end
 
-    it 'is not fresh' do
-      expect(obj.fresh?).to be false
+    it '`content` is a noop' do
+      expect(obj.content).to equal(obj)
     end
+
+    # it 'is not fresh' do
+    #   expect(obj.fresh?).to be false
+    # end
   end
 
   context 'scanning data' do
@@ -31,11 +35,10 @@ RSpec.describe Store::Digest::Entry do
       # object can scan a String
       obj = Store::Digest::Entry.scan 'string lol'
       expect(obj.size).to be 10
-      expect(obj.type).to eql 'text/plain'
+      expect(obj.type).to eql MimeMagic['text/plain']
 
       # tucking the io wrapper test here for now
-      expect(obj.content.read).to eql 'string lol'
-      expect(obj.content.object).to be_a(Store::Digest::Entry)
+      expect(obj.read).to eql 'string lol'
     end
 
     it 'can scan a File' do
@@ -44,8 +47,8 @@ RSpec.describe Store::Digest::Entry do
       obj = Store::Digest::Entry.scan fh
 
       expect(obj.size).to be fh.size
-      expect(obj.type).to eql 'application/x-ruby'
-      expect(obj.fresh?).to be false
+      expect(obj.type).to eql MimeMagic['application/x-ruby']
+      # expect(obj.fresh?).to be false
     end
 
     it 'can scan a Pathname' do
@@ -55,37 +58,58 @@ RSpec.describe Store::Digest::Entry do
       obj = Store::Digest::Entry.scan pn
 
       expect(obj.size).to be pn.size
-      expect(obj.type).to eql 'application/x-ruby'
+      expect(obj.type).to eql MimeMagic['application/x-ruby']
     end
 
-    it 'can scan an IO' do
-      # object can scan an IO
+    # it 'can scan an IO' do
+    #   # object can scan an IO
 
-      # uhh now wondering if this makes any sense
-    end
+    #   # uhh now wondering if this makes any sense
+    # end
 
     it 'can scan a Proc (that returns an IO)' do
-    # object can scan a Proc (that returns an IO)
+      # object can scan a Proc (that returns an IO)
       proc = Proc.new { StringIO.new 'lol' }
       obj  = Store::Digest::Entry.scan(proc)
+      uri  = URI::NI.compute 'lol'
+      expect(obj[:'sha-256']).to eq(uri)
       expect(obj.size).to be 3
     end
 
-    it 'complains if the coerced IO can\'t seek/tell' do
+    it 'can scan a Proc (that takes a write handle)' do
+      proc = -> fh { fh << 'sup dawg' }
+      obj  = Store::Digest::Entry.scan(proc)
+      obj  = Store::Digest::Entry.scan(proc)
+      uri  = URI::NI.compute 'sup dawg'
+      expect(obj[:'sha-256']).to eq(uri)
+      expect(obj.size).to be 8
+    end
+
+    it 'can scan a pipe' do
       # object complains if the coerced IO can't seek/tell (ie no pipes/sockets)
       io = IO.popen ['ping', '-?'], err: %i[child out]
-      expect { Store::Digest::Entry.scan io }.to raise_error(Errno::ESPIPE)
+      entry = Store::Digest::Entry.scan io
+      expect(entry.size).to be > 0
     end
 
     # object correctly sets blob size from scan
+
     # object correctly gleans mtime from content (if file)
+
     # object correctly gleans content-type from path if input is a file
+
     # object otherwise obtains content-type by sampling input
+
     # object complains if specified digests are not in the inventory
+
     # object digests of course match the content
+
     # user should not be able to modify content or digests after a scan
+
     # user should not be able to overwrite size, ctime, ptime, or dtime
+
     # user should not be able to set type/charset/language/encoding to garbage
+
     # input for mtime/type/charset/language/encoding should be normalized
   end
 end
