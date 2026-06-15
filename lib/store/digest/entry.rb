@@ -502,6 +502,7 @@ class Store::Digest::Entry
       'Digest list can\'t be empty' if !empty and digests.empty?
 
     if digests.is_a? Hash
+      # digests = digests[:digests] if digests.key? :digests
       out = digests.map do |k, v|
         # keys must go to symbols; symbols must be valid
         k = k.to_s.downcase.to_sym unless k.is_a? Symbol
@@ -518,6 +519,8 @@ class Store::Digest::Entry
         [k, v]
       end.to_h
 
+      # warn out
+
       # note we are explicitly looking to see if normative is false
       # rather than nil
       return normative == false ? out.keys : out
@@ -531,7 +534,7 @@ class Store::Digest::Entry
       else
         # whatever it is, it should now be a string
         thing = thing.to_s
-        if %r{^(?i:ni|https?)://}.match?(thing) and uri = try_uri(thing)
+        if %r{^(?i:ni|https?)://}.match?(thing) and uri = URI::NI.ingest(thing)
           uri
         else
           # turn it into a symbol
@@ -539,6 +542,8 @@ class Store::Digest::Entry
         end
       end
     end.uniq
+
+    # warn digests.inspect
 
     if digests.all? { |d| d.is_a? URI::NI }
       # we are expressly asking for anticipative if normative is literally false
@@ -924,6 +929,9 @@ class Store::Digest::Entry
   # @return [nil, false, true] the status of the entry
   #
   def stored?
+    # warn @digests
+    scan
+    warn scanned?
     @store.has?(digests) if @store
   end
 

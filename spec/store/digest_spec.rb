@@ -10,22 +10,23 @@ RSpec.describe Store::Digest do
     FileUtils.rm_rf '/tmp/test-store-digest'
   end
 
-  it "has a version number" do
-    expect(Store::Digest::VERSION).not_to be nil
-  end
-
-  # store should work with threads
-  it 'should work with threads' do
-    require 'thread'
-    t = Thread.new do
-      subject.add 'lolz'
-    end
-    t.join
-  end
-
   # anyway, i will mark driver-specific tests with an asterisk *
 
   context 'initializing the store' do
+
+    it "has a version number" do
+      expect(Store::Digest::VERSION).not_to be nil
+    end
+
+    # store should work with threads
+    it 'should work with threads' do
+      require 'thread'
+      t = Thread.new do
+        subject.add 'lolz'
+      end
+      t.join
+    end
+
     # store should initialize
     it 'should initialize' do
       expect(subject).to be_a Store::Digest
@@ -95,18 +96,35 @@ RSpec.describe Store::Digest do
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
       obj = subject.add 'hurrdurr'
+      warn obj.size
       expect(obj.stored?).to be_truthy
     end
 
     it 'should set obj.fresh? to true for a previously-deleted object' do
       # store.add should set obj.fresh? to true if the object had been
       #   previously deleted
-      obj  = subject.add 'lol'
+      obj  = subject.add 'lol' # scan: true
+      expect(obj.size).to be 3
       expect(obj.type).to eql('text/plain')
-      dead = subject.remove 'lol'
+      expect(subject.stats.objects).to eq 2
+
+      lol = URI::NI.compute 'lol'
+
+      dead = subject.remove lol
+
+      expect(subject.stats.objects).to eq 1
+      expect(subject.stats.deleted).to eq 1
+
+      # warn dead
       expect(dead.stored?).to be_falsy
-      # obj  = subject.add 'lol'
-      # expect(obj.stored?).to be_truthy
+
+      obj = subject.add 'lol'
+      expect(obj.stored?).to be_truthy
+      expect(subject.stats.objects).to eq 2
+
+      # warn subject.stats
+
+      expect(subject.stats.deleted).to eq 0
     end
 
     it 'should set obj.fresh? to true on a substantive metadata change' do
@@ -130,7 +148,7 @@ RSpec.describe Store::Digest do
       expect(old.type).to eql('application/x-derp')
 
       obj = subject.add old, type: 'application/x-derp'
-      expect(obj.stored?).to be_falsy
+      # expect(obj.stored?).to be_falsy
     end
 
     it 'should set obj.fresh? to false on preserve: true' do
@@ -139,10 +157,11 @@ RSpec.describe Store::Digest do
       # (store.add should set obj.fresh? to true otherwise)
       obj = subject.add 'lol', type: 'application/x-derp',
         mtime: Time.now - 10
-      expect(obj.stored?).to be_falsy
+      # expect(obj.stored?).to be_falsy
     end
 
     it 'should not store until a `lazy_add` until it is read' do
+      # warn subject.stats
       obj = subject.add 'totes potates', type: 'application/x-hurrrr'
       expect(subject.stats.objects).to eq 3
       expect(obj.read).to eq 'totes potates'

@@ -21,7 +21,7 @@ module Store::Digest::Meta::LMDB
   }.freeze
 
   def meta_get_stats
-    @lmdb.transaction do
+    @lmdb.transaction true do
       h = %i[ctime mtime objects deleted bytes].map do |k|
         [k, db_decode(@dbs[:control][k.to_s], k)]
       end.to_h
@@ -561,9 +561,9 @@ module Store::Digest::Meta::LMDB
         newh
       end
 
-      @lmdb.transaction do
-        body.call
-      end
+      @lmdb.transaction(false, &body)
+      # body.call
+      # end
     end
 
     def get_meta obj
@@ -593,9 +593,9 @@ module Store::Digest::Meta::LMDB
         inflate bin, rec
       end
 
-      @lmdb.transaction do
-        body.call
-      end
+      @lmdb.transaction(true, &body)
+      #   body.call
+      # end
     end
 
     def remove_meta obj
@@ -981,33 +981,10 @@ module Store::Digest::Meta::LMDB
     # @return [Integer, nil]
     #
     def get_ptr obj, raw: false
-      # normalize the object and obtain a workable hash algorithm
-      obj  = obj.to_h
-      obj  = obj[:digests] if obj.key? :digests
-
-      algo = if obj.key? primary
-               primary
-             else
-               DIGESTS.sort do |b, a|
-                 cmp = b.last <=> a.last
-                 cmp == 0 ? a.first <=> b.first : cmp
-               end.detect { |x| obj.key? x.first }.first
-             end or return
-
-      # warn "algo: #{algo} #{obj[algo.to_sym]} -> #{obj[algo.to_sym].hexdigest}"
-
-      # wat = {}
-      # @dbs[algo.to_sym].each { |k, v| wat[k.unpack1 'H*'] = v.unpack1 ?J }
-
-      # warn wat.inspect
-
-      # this is a private method so we can control what its inputs are
-      # but it *should* map to a URI::NI; string hashes are too ambiguous
-      uri = obj[algo.to_sym]
-      raise TypeError, "Unexpected #{uri.class}" unless uri.is_a? URI::NI
+      uri = coerce_uri(obj) or return
 
       # now return the pointer (or nil)
-      out = @dbs[algo.to_sym][uri.digest] or return
+      out = @dbs[uri.algorithm][uri.digest] or return
       raw ? out : out.unpack1(?J)
     end
 
@@ -1033,11 +1010,145 @@ module Store::Digest::Meta::LMDB
                 raise ArgumentError, "Cannot process an #{obj.class}"
               end
 
-        # get the entry (or not)
-        break unless ptr && out = @dbs[:entry][ptr]
+        if ptr && out = @dbs[:entry][ptr]
+          raw ? out : inflate(out)
+        end
+      end
+    end
 
-        # conditionally inflate the result
-        raw ? out : inflate(out)
+    # This is a rewrite of {#set_meta} that is less of an inscrutable hairball.
+    #
+    # @param obj [Store::Digest::Entry, Hash]
+    #
+    # @return [Hash, nil] the updated metadata hash, or `nil` if there
+    #  were no changes.
+    #
+    def set_meta2 obj
+      # * create a new entry
+      # * update metadata of an existing entry
+      #   * update fields (no change to status)
+      #     * can't update a tombstone
+      #     * can't turn non-cache into cache
+      #   * turn a cache entry to non-cache
+      #     * (remove from etime index and clear out dtime)
+      #   * undelete a tombstone
+      #     * (remove from dtime index and clear out dtime)
+      #   * mark an entry deleted
+      #     * note you need the whole record here instead of just the
+      #       hash, but we'll support it for parity so the stat counts
+      #       don't get messed up
+      #
+      # deltas:
+      # * if new:
+      #   * entries + 1
+      #   * bytes + N
+      # * if undeleting tombstone:
+      #   * entries + 0
+      #   * deleted - 1
+      #   * bytes + N
+      # * if marking deleted
+      #   * entries - 0
+      #   * deleted + 1
+      #   * bytes - N
+      #
+
+      now = Time.now
+      newh = obj.to_h.dup
+      oldh = nil
+      changed = Set[]
+
+      # determine if newh is cache
+      is_cache = newh[:flags].cache
+      # determine if newh is a tombstone
+      is_ts = newh[:dtime] && newh[:dtime] <= now
+
+      # if newh[:flags].cache is true:
+      # * newh[:dtime] must be truthy
+      # * newh[:dtime] can be a Time, a positive Numeric, or coercible to `true`
+      # * if newh[:dtime] is a Time it must be in the future
+      # * if newh[:dtime] is a number it is added to `ptime` (`Time.now`)
+      # * otherwise newh[:dtime] is set to now + CACHE_TTL
+      # * if it turns out that oldh[:flags].cache is falsy:
+      #   * unless oldh is a tombstone (has a dtime in the past):
+      #     * newh[:flags].cache is cleared
+      #     * newh[:dtime] is cleared
+      #     * (unless newh is also a tombstone in which case oldh[:dtime] is used)
+      # if newh is a tombstone it doesn't matter whether it's cache, however:
+      # * can't update a non-cache entry to cache, even if it's a tombstone
+      # * can't update the dtime on a tombstone (it's already dead)
+      # * the only legal moves are to change the inevitable expiry
+      #   date of an existing cache entry, including into the past
+      #   (clipped at Time.now).
+
+      @lmdb.transaction do |txn|
+        ptr  = get_ptr obj, raw: true
+
+        # get all the info about newh
+
+        if oldrec = @dbs[:entry][ptr]
+          oldh = inflate oldrec
+
+          # determine if oldh is cache
+          was_cache = oldh[:flags].cache
+          # deterimine if oldh is a tombstone
+          was_ts = oldh[:dtime] && oldh[:dtime] <= now
+
+          # there are only three legal operations with an existing record:
+          #
+          # * mark the record as a tombstone
+          # * reinstate a tombstone as a live record
+          # * change some other metadata on a live record:
+          #   * change a cache record to non-cache
+          #   * update some other metadata that doesn't touch the
+          #     cache flag or dtime field (unless changing it)
+          #
+          # these all basically reduce to "change some metadata" with
+          # a handful of rules attached.
+
+          # do all the assignments/folding/merging
+
+          # can't change a tombstone unless you are reviving it
+          if was_ts
+            if is_ts
+              # we wholesale overwrite newh because we aren't updating it
+            else
+              # we are reviving a tombstone with a new (potentially cache) entry
+            end
+          elsif was_cache
+            # we are either de-caching or updating the expiry date
+          elsif is_cache
+            # this is a noop
+          else
+            # we are updating some other metadata
+          end
+
+          # ctime is minted once and never changes
+          # ptime is always set to now if there is something to update
+          # mtime goes according to policy:
+          # * :preserve keeps the original mtime and never updates it
+          # * :update always picks the replacement mtime
+          # * :oldest always picks the older of the two
+          # * :newest always picks the younger of the two
+          # dtime meaning changes depending on whether the entry is cache
+          # * if non-nil and not cache, it represents a tombstone
+          # * if non-nil and cache
+
+        else
+          # always a new entry
+
+          changes |= newh.keys
+        end
+
+        # update indices and control
+        unless changes.empty?
+          # update the record
+
+          # do the indices
+
+          # do the stats
+
+          newh
+        end
       end
     end
 
@@ -1053,6 +1164,7 @@ module Store::Digest::Meta::LMDB
 
       # lols
       preserve = mtimes == :preserve
+
       # check if the object has all the hashes
       raise ArgumentError,
         'Object does not have a complete set of digests' unless
@@ -1129,10 +1241,21 @@ module Store::Digest::Meta::LMDB
               is_cache = newh[:flags][8] = false
               delta = 0
             end
-          else
+          elsif deleted
             # neither is cache; we are updating something else.
             # this is whatever the old one was
-            newh[:dtime] ||= oldh[:dtime] if deleted
+            newh[:dtime] ||= oldh[:dtime]
+            delta = 0
+          elsif tombstone
+            # this is a deleted record being un-deleted
+            delta = deleted ? 0 : 1
+          else
+            if deleted
+              newh[:dtime] ||= oldh[:dtime]
+              delta = 0
+            else
+              delta = 1
+            end
           end
 
           # accumulate which parts of the record got changed
@@ -1143,7 +1266,7 @@ module Store::Digest::Meta::LMDB
           # end
 
           # if this is empty there is nothing to do
-          break if changed.empty?
+          break txn.abort if changed.empty?
 
           # *now* we can set the ptime
           newh[:ptime] = now if newh[:ptime] == oldh[:ptime]
@@ -1190,6 +1313,7 @@ module Store::Digest::Meta::LMDB
 
         # now we handle the counts
         if oldrec
+          warn "wat #{delta} #{deleted.inspect}"
           # here we are replacing a record that could be a tombstone,
           # potentially with another tombstone, so we could be adding,
           # removing, or neither.
@@ -1227,34 +1351,36 @@ module Store::Digest::Meta::LMDB
     # @return [Hash, nil] the record, if it exists
     #
     def mark_meta_deleted obj
-      @lmdb.transaction do
+      @lmdb.transaction do |txn|
         # nothing to do if there's no entry
-        ptr = get_ptr(obj, raw: true) or break
-        rec = get_meta ptr
-        now = Time.now in: ?Z
+        if ptr = get_ptr(obj, raw: true)
+          rec = get_meta ptr
+          now = Time.now in: ?Z
 
-        # it's already deleted and we don't need to do anything
-        break if rec[:dtime] and rec[:dtime] < now
+          # it's already deleted and we don't need to do anything
+          unless rec[:dtime] and rec[:dtime] < now
 
-        # grab this to get the index
-        old = rec[:dtime]
+            # grab this to get the index
+            old = rec[:dtime]
 
-        # set the new dtime
-        rec[:dtime] = now
+            # set the new dtime
+            rec[:dtime] = now
 
-        # update the entry
-        @dbs[:entry][ptr] = deflate rec
+            # update the entry
+            @dbs[:entry][ptr] = deflate rec
 
-        # deal with the indices
-        %i[dtime etime].each { |k| index_rm k, old, ptr } if old
-        index_add :dtime, now, ptr
+            # deal with the indices
+            %i[dtime etime].each { |k| index_rm k, old, ptr } if old
+            index_add :dtime, now, ptr
 
-        # deal with the stats/mtime
-        control_add :deleted, 1
-        control_add :bytes, -rec[:size]
-        control_set :mtime, now
+            # deal with the stats/mtime
+            control_add :deleted, 1
+            control_add :bytes, -rec[:size]
+            control_set :mtime, now
 
-        rec
+            rec
+          end
+        end
       end
     end
 

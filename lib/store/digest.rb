@@ -30,47 +30,6 @@ require 'store/digest/entry'
 class Store::Digest
   private
 
-  def coerce_object obj, type: nil, charset: nil,
-      language: nil, encoding: nil, mtime: nil, strict: true
-    obj = case obj
-          when Store::Digest::Entry
-            obj.dup
-          when URI::NI
-            # just return the uri
-            Store::Digest::Entry.new digests: obj,
-              type: type, charset: charset, language: language,
-              encoding: encoding, mtime: mtime
-          when IO, String, StringIO,
-              -> x { %i[seek pos read].all? { |m| x.respond_to? m } }
-            # assume this is going to be scanned later
-            Store::Digest::Entry.new obj,
-              type: type, charset: charset, language: language,
-              encoding: encoding, mtime: mtime
-          when Pathname
-            # actually open pathnames that are handed directly into S::D
-            Store::Digest::Entry.new obj.expand_path.open('rb'),
-              type: type, charset: charset, language: language,
-              encoding: encoding, mtime: mtime
-          else
-            raise ArgumentError,
-              "Can't coerce a #{obj.class} to Store::Digest::Entry"
-          end
-
-    # overwrite the user-mutable metadata
-    b = binding
-    %i[type charset language encoding mtime].each do |field|
-      begin
-        if x = b.local_variable_get(field)
-          obj.send "#{field}=", x
-        end
-      rescue RuntimeError => e
-        raise e if strict
-      end
-    end
-
-    obj
-  end
-
   # Squeeze a digest URI (or several) out of the input, if possible.
   #
   # @param obj [URI::NI, Array<URI::NI>, Hash{Symbol=>URI::NI},
@@ -89,6 +48,7 @@ class Store::Digest
       # this shouldn't happen but you never know
       raise ArgumentError, 'Digest list is empty' if digests.empty?
     else
+      obj = obj[:digests] if obj.is_a? Hash and obj.key? :digests
       # this can also raise if it fails to coerce
       digests = Store::Digest::Entry.coerce_digests obj, normative: true
     end
@@ -151,7 +111,8 @@ class Store::Digest
       bm = :get_blob
     end
 
-    transaction readonly: remove do
+    transaction readonly: !remove do
+      warn "#{remove} #{mm} #{bm}"
       if meta = send(mm, uri)
         if blob = send(bm, meta[:digests][primary].digest)
           meta.merge content: blob
@@ -175,22 +136,22 @@ class Store::Digest
     # add a modification time if missing
     mtime = params[:mtime] ||= Time.now
 
-    # managed temporary file handle
-    tmp = temp_blob
-
-    # get the basic scannable values (digests, size, type)
-    scanned = Entry.scan_raw(
-      content, algorithms: algorithms,
-      blocksize: blocksize, type: true) { |buf| tmp << buf }
-
-    # remove the scanned type if it is less specific than supplied
-    scanned.delete(:type) if params[:type] &&
-      !scanned[:type].descendant_of?(params[:type])
-
-    # now merge the scanned params into the supplied ones
-    params.merge! scanned
-
     transaction do
+
+      # managed temporary file handle
+      tmp = temp_blob
+
+      # get the basic scannable values (digests, size, type)
+      scanned = Entry.scan_raw(
+        content, algorithms: algorithms,
+        blocksize: blocksize, type: true) { |buf| tmp << buf }
+
+      # remove the scanned type if it is less specific than supplied
+      scanned.delete(:type) if params[:type] &&
+        !scanned[:type].descendant_of?(params[:type])
+
+      # now merge the scanned params into the supplied ones
+      params.merge! scanned
 
       # warn "asserted: #{params[:type]} -> scanned: #{scanned[:type]} #{scanned[:type].descendant_of?(params[:type])}"
 
@@ -369,11 +330,13 @@ class Store::Digest
 
     transaction readonly: true do
       # obviously false if there's no record
-      break false unless h = get_meta(entry)
-
-      # a metadata record is considered a tombstone if it has a dtime
-      # at all if it's an ordinary entry, and in the past if it's cache
-      tombstone || !deleted?(h)
+      if h = get_meta(entry)
+        # a metadata record is considered a tombstone if it has a dtime
+        # at all if it's an ordinary entry, and in the past if it's cache
+        tombstone || !deleted?(h)
+      else
+        false
+      end
     end
   end
 
