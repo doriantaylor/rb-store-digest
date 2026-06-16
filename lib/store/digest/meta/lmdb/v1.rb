@@ -375,12 +375,11 @@ module Store::Digest::Meta::LMDB
       end
     end
 
-    # This is a rewrite of {#set_meta} that is less of an inscrutable hairball.
+    # Persist the metadata for a {Store::Digest::Entry}.
     #
     # @param obj [Store::Digest::Entry, Hash]
     #
-    # @return [Hash, nil] the updated metadata hash, or `nil` if there
-    #  were no changes.
+    # @return [Hash] the updated metadata hash.
     #
     def set_meta2 obj
       # * create a new entry
@@ -603,201 +602,10 @@ module Store::Digest::Meta::LMDB
           control_set :mtime, now
         end
 
-        txn.commit
+        # txn.commit
       end
 
       newh
-    end
-
-    # Persist the metadata for a {Store::Digest::Entry}.
-    #
-    # @param obj [Store::Digest::Entry, Hash]
-    #
-    # @return [void]
-    #
-    def set_meta obj
-      # hashify
-      obj = obj.to_h
-
-      # lols
-      preserve = mtimes == :preserve
-
-      # check if the object has all the hashes
-      raise ArgumentError,
-        'Object does not have a complete set of digests' unless
-        (algorithms - obj[:digests].keys).empty?
-
-      # since nothing changes in a content-addressable store by
-      # definition, the only meaningful changes involve adding
-      # information like `type`, `language`, `charset`, `encoding`,
-      # and their concomitant checked/valid flags. `size` and `ctime`
-      # should never change. `ptime` should be set automatically to
-      # `now`, and only if anything else changes. `mtime` should only
-      # be changed if `preserve` is false. `dtime`, if present, should
-      # be no greater than `now` unless the object is cache. an object
-      # with a `dtime` in the past is assumed to be deleted.
-
-      @lmdb.transaction do |txn|
-        # initial information
-        now   = Time.now in: ?Z
-        ptr   = get_ptr(obj, raw: true) || last_key(:entry, raw: true)
-        newh  = obj.to_h
-        oldh  = nil
-
-        # warn ptr.inspect
-
-        # other things we reuse
-        delta    = 0 # whether we are adding or removing a record
-        deleted  = newh[:dtime] && newh[:dtime] <= now
-        is_cache = !!(newh[:flags] || [])[8] # may not be present
-
-        # check if the entry already exists
-        if oldrec = @dbs[:entry][ptr]
-          oldh = inflate oldrec
-
-          # the size and ctime should not change
-          newh[:size]  = oldh[:size]
-          newh[:ctime] = oldh[:ctime]
-          newh[:ptime] ||= oldh[:ptime]
-          newh[:mtime] = (preserve ? (oldh[:mtime] || newh[:mtime]) :
-                          (newh[:mtime] || oldh[:mtime])) || now
-
-          # only the old value if the new one isn't specified
-          %i[type language charset encoding].each do |key|
-            newh[key] ||= oldh[key]
-          end
-
-          # determine if the old record is a tombstone
-          tombstone = oldh[:dtime] && oldh[:dtime] <= now
-
-          # OKAY HERE IS THE ALL-IMPORTANT CACHE LOGIC:
-          #
-          # we want it so that a cache object can be "solidified"
-          # (turned into a non-cache object), but a non-cache object
-          # can't be turned into a cache object. `dtime` is punned for
-          # cache objects as an expiration time and is likely (but not
-          # guaranteed) to be in the future.
-          #
-          if was_cache = oldh[:flags][8]
-            # we get here if there is no change in the state of the
-            # cache, but we could be overwriting a tombstone, so we
-            # want to make sure there is an expiration time.
-            if is_cache && !newh[:dtime]
-              oexp = oldh[:dtime] && oldh[:dtime] > now
-              newh[:dtime] = oexp || now + control_get(:expiry)
-            end
-          elsif is_cache
-            # the record is not cache but it could be a tombstone. we
-            # can overwrite it with cache if it is, but not if it
-            # isn't, because the implication is something is using it.
-            if tombstone
-              newh[:dtime] ||= now + control_get(:expiry)
-              delta = 1
-            else
-              newh[:dtime] = nil
-              is_cache = newh[:flags][8] = false
-              delta = 0
-            end
-          elsif deleted
-            # neither is cache; we are updating something else.
-            # this is whatever the old one was
-            newh[:dtime] ||= oldh[:dtime]
-            delta = 0
-          elsif tombstone
-            # this is a deleted record being un-deleted
-            delta = deleted ? 0 : 1
-          else
-            if deleted
-              newh[:dtime] ||= oldh[:dtime]
-              delta = 0
-            else
-              delta = 1
-            end
-          end
-
-          # accumulate which parts of the record got changed
-          changed = RECORD.keys.select { |k| newh[k] != oldh[k] }
-
-          # changed.each do |change|
-          #   warn "#{change}: #{oldh[change]} -> #{newh[change]}"
-          # end
-
-          # if this is empty there is nothing to do
-          break txn.abort if changed.empty?
-
-          # *now* we can set the ptime
-          newh[:ptime] = now if newh[:ptime] == oldh[:ptime]
-          changed << :ptime unless changed.include? :ptime
-
-          # we don't index the flags
-          (changed - [:flags]).each do |k|
-            index_rm k, oldh[k], ptr if oldh[k]
-            if k == :dtime
-              index_rm  :etime, oldh[:dtime], ptr if was_cache
-              index_add :etime, newh[:dtime], ptr if is_cache
-            else
-              index_add k, newh[k], ptr if newh[k]
-            end
-          end
-        else
-
-          # we are unambiguously adding a thing
-          delta = deleted ? 0 : 1
-
-          newh[:ctime] ||= now
-          newh[:mtime] ||= now
-          newh[:ptime] ||= now
-          newh[:type]  ||= 'application/octet-stream'
-
-          # set the algo mappings
-          algorithms.each do |algo|
-            # warn "setting #{algo} -> #{obj[algo].hexdigest}"
-            @dbs[algo].put? obj[:digests][algo].digest, ptr
-          end
-
-          # set the indices
-          RECORD.except(:flags).keys.each do |k|
-            if newh[k]
-              # special case for non-deleted cache
-              kk = k == :dtime ? (is_cache && !deleted) ? :etime : :dtime : k
-              index_add kk, newh[k], ptr
-            end
-          end
-        end
-
-        # okay now we actually set the entry
-        @dbs[:entry][ptr] = deflate newh
-
-        # now we handle the counts
-        if oldrec
-          # warn "wat #{delta} #{deleted.inspect}"
-          # here we are replacing a record that could be a tombstone,
-          # potentially with another tombstone, so we could be adding,
-          # removing, or neither.
-          control_add :objects, delta
-          control_add :deleted, -delta
-          control_add :bytes, newh[:size] * delta
-        else
-          # here we are unconditionally adding a new record, but the
-          # record we could be adding could itself be a tombstone.
-          control_add :objects, 1
-
-          if delta > 0
-            # it's an ordinary entry
-            control_add :bytes, newh[:size]
-          else
-            # it's a tombstone
-            control_add :deleted, 1
-          end
-        end
-
-        # and finally update the mtime
-        control_set :mtime, now
-
-        txn.commit
-
-        newh
-      end
     end
 
     # Set `dtime` to the current timestamp and update the indices and stats.

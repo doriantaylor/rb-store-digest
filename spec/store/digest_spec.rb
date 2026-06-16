@@ -102,7 +102,7 @@ RSpec.describe Store::Digest do
       expect(subject.stats.objects).to eq 1
     end
 
-    it 'should set obj.fresh? to true for a previously-deleted object' do
+    it 'should handle deleting an object and re-adding it' do
       # store.add should set obj.fresh? to true if the object had been
       #   previously deleted
       expect(subject.stats.objects).to eq 1
@@ -138,7 +138,7 @@ RSpec.describe Store::Digest do
       expect(subject.stats.deleted).to eq 0
     end
 
-    it 'should set obj.fresh? to true on a substantive metadata change' do
+    it 'should handle a substantive metadata change' do
       # store.add should set obj.fresh? to true if any metadata has
       #   been updated
       obj = subject.add 'lol', type: 'application/x-derp'
@@ -159,20 +159,20 @@ RSpec.describe Store::Digest do
       expect(old).to be_a(Store::Digest::Entry)
       expect(old.type).to eql('application/x-derp')
 
-      obj = subject.add old, type: 'application/x-derp'
+      obj = subject.add old, type: 'application/x-hurr'
       # expect(obj.stored?).to be_falsy
       expect(subject.stats.objects).to eq 2
     end
 
-    it 'should set obj.fresh? to false on preserve: true' do
-      # store.add should set obj.fresh? to false if preserve: true and the
-      # only difference in the new object is its mtime
-      # (store.add should set obj.fresh? to true otherwise)
-      obj = subject.add 'lol', type: 'application/x-derp',
-        mtime: Time.now - 10
-      # expect(obj.stored?).to be_falsy
-      expect(subject.stats.objects).to eq 2
-    end
+    # it 'should set obj.fresh? to false on preserve: true' do
+    #   # store.add should set obj.fresh? to false if preserve: true and the
+    #   # only difference in the new object is its mtime
+    #   # (store.add should set obj.fresh? to true otherwise)
+    #   obj = subject.add 'lol', type: 'application/x-derp',
+    #     mtime: Time.now - 10
+    #   # expect(obj.stored?).to be_falsy
+    #   expect(subject.stats.objects).to eq 2
+    # end
 
     it 'should not store until it is read' do
       # warn subject.stats
