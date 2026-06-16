@@ -11,6 +11,10 @@ RSpec.describe Store::Digest do
     FileUtils.rm_rf '/tmp/test-store-digest'
   end
 
+  after :each do
+    GC.compact
+  end
+
   # anyway, i will mark driver-specific tests with an asterisk *
 
   context 'initializing the store' do
@@ -180,7 +184,11 @@ RSpec.describe Store::Digest do
       expect(subject.stats.objects).to eq 2
       expect(obj.read).to eq 'totes potates'
       # warn obj.object.digests
-      expect(subject.stats.objects).to eq 3
+      expect(obj.size).to eq 'totes potates'.length
+
+      objs = subject.stats.objects
+
+      expect(objs).to eq 3
     end
   end
 

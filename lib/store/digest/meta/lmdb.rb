@@ -24,8 +24,8 @@ module Store::Digest::Meta::LMDB
   }.freeze
 
   def meta_get_stats
-    # XXX this should be a 
-    @lmdb.transaction true do
+    # XXX this should be a read transaction
+    @lmdb.transaction true do |txn|
       h = %i[ctime mtime objects deleted bytes].map do |k|
         [k, db_decode(@dbs[:control][k.to_s], k)]
       end.to_h
@@ -41,7 +41,7 @@ module Store::Digest::Meta::LMDB
 
       # would love to do min/max size/dates/etc but that is going to
       # take some lower-level cursor finessing
-
+      # txn.commit
       h
     end
   end
