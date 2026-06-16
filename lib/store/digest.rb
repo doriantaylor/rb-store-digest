@@ -169,7 +169,7 @@ class Store::Digest
       content = settle_blob params[:digests][primary].digest, tmp, mtime: mtime
 
       # `set_meta` returns nil if unchanged
-      meta = set_meta2(params) || params
+      meta = set_meta params
 
       # warn meta.inspect
 

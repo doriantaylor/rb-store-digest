@@ -11,10 +11,10 @@ RSpec.describe Store::Digest do
     FileUtils.rm_rf '/tmp/test-store-digest'
   end
 
-  # after :each do
-  #   GC.compact
-  #   # GC.start
-  # end
+  after :each do
+    GC.compact
+    # GC.start
+  end
 
   # anyway, i will mark driver-specific tests with an asterisk *
 

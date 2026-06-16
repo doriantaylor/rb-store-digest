@@ -381,7 +381,7 @@ module Store::Digest::Meta::LMDB
     #
     # @return [Hash] the updated metadata hash.
     #
-    def set_meta2 obj
+    def set_meta obj
       # * create a new entry
       # * update metadata of an existing entry
       #   * update fields (no change to status)
