@@ -13,6 +13,7 @@ RSpec.describe Store::Digest do
 
   # after :each do
   #   GC.compact
+  #   # GC.start
   # end
 
   # anyway, i will mark driver-specific tests with an asterisk *
@@ -155,7 +156,7 @@ RSpec.describe Store::Digest do
       expect(subject.stats.objects).to eq 2
     end
 
-    it 'should set obj.? to false for an existing object' do
+    it 'should not change object count when updating an existing object' do
       # store.add should set obj.fresh? to false if the object was
       # already present
       # (lol god now we are repeating this mimetype to make the tests pass)
