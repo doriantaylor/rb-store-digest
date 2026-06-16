@@ -112,7 +112,7 @@ class Store::Digest
     end
 
     transaction readonly: !remove do
-      warn "#{remove} #{mm} #{bm}"
+      # warn "#{remove} #{mm} #{bm}"
       if meta = send(mm, uri)
         if blob = send(bm, meta[:digests][primary].digest)
           meta.merge content: blob
@@ -134,7 +134,13 @@ class Store::Digest
     # this will automatically coerce nil to application/octet-stream
     params[:type] = MimeMagic[params[:type]]
     # add a modification time if missing
-    mtime = params[:mtime] ||= Time.now
+    now   = Time.now(in: ?Z)
+    mtime = params[:mtime] ||= now
+    flags = params[:flags] ||= Store::Digest::Entry::Flags.from(0)
+    if cache = params[:cache]
+      flags.cache = true
+      params[:dtime] ||= now + cache_ttl
+    end
 
     transaction do
 
@@ -147,6 +153,8 @@ class Store::Digest
         blocksize: blocksize, type: true) { |buf| tmp << buf }
 
       # remove the scanned type if it is less specific than supplied
+      # scanned.delete(:type) if params[:type] &&
+      #   params[:type].descendant_of?(scanned[:type])
       scanned.delete(:type) if params[:type] &&
         !scanned[:type].descendant_of?(params[:type])
 
@@ -161,7 +169,7 @@ class Store::Digest
       content = settle_blob params[:digests][primary].digest, tmp, mtime: mtime
 
       # `set_meta` returns nil if unchanged
-      meta = set_meta(params) || params
+      meta = set_meta2(params) || params
 
       # warn meta.inspect
 
@@ -241,11 +249,12 @@ class Store::Digest
   # @return [void]
   #
   def initialize driver: Store::Digest::Driver::LMDB,
-      blocksize: 2**16, mtimes: :preserve, **options
+      blocksize: 2**16, mtimes: :preserve, ttl: 60 * 60 * 24, **options
     driver ||= Store::Digest::Driver::LMDB
 
     @blocksize = blocksize
-    @mtimes = mtimes || :preserve
+    @mtimes    = mtimes || :preserve
+    @cache_ttl = ttl
 
     unless driver.is_a? Module
       # coerce to symbol
@@ -267,7 +276,7 @@ class Store::Digest
     setup(**options)
   end
 
-  attr_reader :blocksize, :mtimes
+  attr_reader :blocksize, :mtimes, :cache_ttl
 
   # XXX this is not right; leave it for now
   # def to_s

@@ -3,6 +3,11 @@ require 'store/digest/version'
 
 class Store::Digest::Error < RuntimeError
 
+  # Raised when there is an irreconcilable configuration parameter.
+  #
+  class Configuration < self
+  end
+
   # Raised when you try to add a deleted entry to a store.
   #
   class Deleted < self

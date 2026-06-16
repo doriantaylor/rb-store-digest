@@ -7,10 +7,10 @@ RSpec.describe Store::Digest::ReadWrapper do
   context 'input coercion' do
     SDRW = Store::Digest::ReadWrapper
 
-    it 'should coerce a string' do
+    it 'should coerce a string into a StringIO' do
       io = SDRW.coerce 'hi lol'
 
-      expect(io).to be_a(SDRW)
+      expect(io).to be_a(StringIO)
     end
 
     it 'should noop when you pass in something that quacks like an IO' do

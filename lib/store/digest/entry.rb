@@ -97,6 +97,14 @@ class Store::Digest::Entry
       end
     end
 
+    def &(int)
+      to_i & int.to_i
+    end
+
+    def |(int)
+      to_i | int.to_i
+    end
+
     # wish there was a cleaner way to do derive individual instance
     # methods from class methods
     begin
@@ -931,7 +939,7 @@ class Store::Digest::Entry
   def stored?
     # warn @digests
     scan
-    warn scanned?
+    # warn scanned?
     @store.has?(digests) if @store
   end
 

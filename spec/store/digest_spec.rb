@@ -6,6 +6,7 @@ RSpec.describe Store::Digest do
   subject { @store }
 
   after :context do
+    # warn "wtf running"
     @store = nil
     FileUtils.rm_rf '/tmp/test-store-digest'
   end
@@ -58,23 +59,23 @@ RSpec.describe Store::Digest do
     # store should initialize with objects/deleted/byte counts all zero
   end
 
-  context 'poke at Driver::LMDB' do
-    # store should complain if you don't tell it where to set up shop *
+  # context 'poke at Driver::LMDB' do
+  #   # store should complain if you don't tell it where to set up shop *
 
-    # store should create its root directory if it doesn't exist *
+  #   # store should create its root directory if it doesn't exist *
 
-    # store should complain if creating a directory fails *
+  #   # store should complain if creating a directory fails *
 
-    # store should complain if its root is anything but an rwx directory *
+  #   # store should complain if its root is anything but an rwx directory *
 
-    # store should correctly commute its umask to the directory *
+  #   # store should correctly commute its umask to the directory *
 
-    # store should setgid its directories if the OS supports it *
+  #   # store should setgid its directories if the OS supports it *
 
-    # store should chown its contents to make sure it can be accessed *
+  #   # store should chown its contents to make sure it can be accessed *
 
-    # store should initialize metadata database, whatever that entails *
-  end
+  #   # store should initialize metadata database, whatever that entails *
+  # end
 
 
   context 'storing objects' do
@@ -95,35 +96,45 @@ RSpec.describe Store::Digest do
     it 'should set obj.stored? to true for a new object' do
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
-      obj = subject.add 'hurrdurr'
-      warn obj.size
-      expect(obj.stored?).to be_truthy
+      entry = subject.add 'hurrdurr', scan: true
+      # warn entry.inspect
+      expect(entry.stored?).to be_truthy
+      expect(subject.stats.objects).to eq 1
     end
 
     it 'should set obj.fresh? to true for a previously-deleted object' do
       # store.add should set obj.fresh? to true if the object had been
       #   previously deleted
-      obj  = subject.add 'lol' # scan: true
+      expect(subject.stats.objects).to eq 1
+
+      obj  = subject.add 'lol', scan: true
+
       expect(obj.size).to be 3
+      expect(obj.scanned?).to be_truthy
       expect(obj.type).to eql('text/plain')
       expect(subject.stats.objects).to eq 2
+      expect(subject.stats.bytes).to eq 11
+      expect(subject.stats.deleted).to eq 0
 
       lol = URI::NI.compute 'lol'
 
-      dead = subject.remove lol
+      dead = subject.remove lol, forget: false
 
-      expect(subject.stats.objects).to eq 1
+      expect(subject.stats.bytes).to eq 8
+      expect(subject.stats.objects).to eq 2
       expect(subject.stats.deleted).to eq 1
 
       # warn dead
       expect(dead.stored?).to be_falsy
 
-      obj = subject.add 'lol'
+      obj = subject.add 'lol', scan: true
+      expect(obj.size).to be 3
       expect(obj.stored?).to be_truthy
       expect(subject.stats.objects).to eq 2
 
       # warn subject.stats
 
+      expect(subject.stats.bytes).to eq 11
       expect(subject.stats.deleted).to eq 0
     end
 
@@ -137,6 +148,7 @@ RSpec.describe Store::Digest do
       wut = subject.get obj
       expect(wut).to be_a(Store::Digest::Entry)
       expect(wut.type).to eql('application/x-derp')
+      expect(subject.stats.objects).to eq 2
     end
 
     it 'should set obj.? to false for an existing object' do
@@ -149,6 +161,7 @@ RSpec.describe Store::Digest do
 
       obj = subject.add old, type: 'application/x-derp'
       # expect(obj.stored?).to be_falsy
+      expect(subject.stats.objects).to eq 2
     end
 
     it 'should set obj.fresh? to false on preserve: true' do
@@ -158,15 +171,16 @@ RSpec.describe Store::Digest do
       obj = subject.add 'lol', type: 'application/x-derp',
         mtime: Time.now - 10
       # expect(obj.stored?).to be_falsy
+      expect(subject.stats.objects).to eq 2
     end
 
-    it 'should not store until a `lazy_add` until it is read' do
+    it 'should not store until it is read' do
       # warn subject.stats
-      obj = subject.add 'totes potates', type: 'application/x-hurrrr'
-      expect(subject.stats.objects).to eq 3
+      obj = subject.add 'totes potates', type: 'application/x-hurrr'
+      expect(subject.stats.objects).to eq 2
       expect(obj.read).to eq 'totes potates'
       # warn obj.object.digests
-      expect(subject.stats.objects).to eq 4
+      expect(subject.stats.objects).to eq 3
     end
   end
 
