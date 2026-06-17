@@ -12,6 +12,7 @@ RSpec.describe Store::Digest do
   end
 
   after :each do
+    # pp ObjectSpace.each_object(LMDB::Transaction).to_a
     GC.compact
     # GC.start
   end
