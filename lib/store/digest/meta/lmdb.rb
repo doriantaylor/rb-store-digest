@@ -23,10 +23,13 @@ module Store::Digest::Meta::LMDB
     "sha-512": 64,
   }.freeze
 
+  LMDB_FLAGS =
+    %i[fixedmap nosubdir nosync rdonly nometasync writemap mapasync notls]
+
   def meta_get_stats
     # XXX this should be a read transaction
-    @lmdb.transaction true do |txn|
-      control = @lmdb[:control]
+    lmdb.transaction? true do |txn|
+      control = lmdb[:control]
       h = %i[ctime mtime objects deleted bytes].map do |k|
         [k, db_decode(control[k.to_s], k)]
       end.to_h
@@ -37,7 +40,7 @@ module Store::Digest::Meta::LMDB
       # get counts on all the countables
       h.merge!(
         %i[type language charset encoding].map do |d|
-          db = @lmdb[d]
+          db = lmdb[d]
           ["#{d}s".to_sym, db.keys.map { |k| [k, db.cardinality(k)] }.to_h]
         end.to_h)
 
@@ -59,8 +62,10 @@ module Store::Digest::Meta::LMDB
     raise ArgumentError, 'Mapsize must be a positive integer' unless
       mapsize.is_a? Integer and mapsize > 0
 
-    lmdbopts = { mode: 0666 & ~umask, mapsize: mapsize }
-    @lmdb = ::LMDB.new dir, lmdbopts
+    @lmdb_opts = {
+      mode: 0666 & ~umask,
+      mapsize: mapsize,
+    }.merge(options.slice(*LMDB_FLAGS))
 
     algos = options[:algorithms] || DIGESTS.keys
     raise ArgumentError, "Invalid algorithm specification #{algos}" unless
@@ -70,9 +75,9 @@ module Store::Digest::Meta::LMDB
     raise ArgumentError, "Invalid primary algorithm #{popt}" unless
       popt.is_a? Symbol and DIGESTS[popt]
 
-    @lmdb.transaction do
+    lmdb.transaction? do
       # load up the control database
-      control = @lmdb.database('control', create: true)
+      control = lmdb.database('control', create: true)
 
       # if control is empty or version is 1, extend V1
       if control.empty?
@@ -88,13 +93,12 @@ module Store::Digest::Meta::LMDB
       else
         # otherwise error
         v = control['version']
-        raise CorruptStateError,
-          "Control database has unrecognized version #{v}"
+        raise CorruptStateError, "Control database has unrecognized version #{v}"
       end
 
       if a = algorithms
         raise ArgumentError,
-          "Supplied algorithms #{algos.sort} do not match instantiated #{a}" if
+        "Supplied algorithms #{algos.sort} do not match instantiated #{a}" if
           algos.sort != a
       else
         a = algos.sort
@@ -103,20 +107,27 @@ module Store::Digest::Meta::LMDB
 
       if pri = primary
         raise ArgumentError,
-          "Supplied algorithm #{popt} does not match instantiated #{pri}" if
+        "Supplied algorithm #{popt} does not match instantiated #{pri}" if
           popt != pri
       else
         pri = popt
         control['primary'] = popt.to_s
       end
-
       setup_dbs
     end
 
-    @lmdb.sync
+    lmdb.sync
   end
 
   public
+
+  # Return the LMDB handle for the given process.
+  #
+  # @return [LMDB::Environment]
+  #
+  def lmdb
+    (@lmdb ||= {})[Process.pid] ||= ::LMDB.new dir, @lmdb_opts
+  end
 
   # Wrap the block in a transaction. Trying to start a read-write
   # transaction (or do a write operation, as they are wrapped by
@@ -127,8 +138,8 @@ module Store::Digest::Meta::LMDB
   # @param block [Proc] the code to run.
   #
   def transaction readonly: false, &block
-    @lmdb.transaction(readonly) do
-      # we do not want to transmit
+    lmdb.transaction?(readonly) do
+      # we do not want to transmit the transaction
       block.call
     end
   end
@@ -136,8 +147,8 @@ module Store::Digest::Meta::LMDB
   # Return the set of algorithms initialized in the database.
   # @return [Array] the algorithms
   def algorithms
-    @algorithms ||= @lmdb.transaction do
-      if ret = @lmdb[:control]['algorithms']
+    @algorithms ||= lmdb.transaction? true do
+      if ret = lmdb[:control]['algorithms']
         ret.strip.downcase.split(/\s*,+\s*/).map(&:to_sym)
       end
     end
@@ -146,8 +157,8 @@ module Store::Digest::Meta::LMDB
   # Return the primary digest algorithm.
   # @return [Symbol] the primary algorithm
   def primary
-    @primary ||= @lmdb.transaction do
-      if ret = @lmdb[:control]['primary']
+    @primary ||= lmdb.transaction? true do
+      if ret = lmdb[:control]['primary']
         ret.strip.downcase.to_sym
       end
     end
@@ -156,8 +167,8 @@ module Store::Digest::Meta::LMDB
   # Return the number of objects in the database.
   # @return [Integer]
   def objects
-    @lmdb.transaction do
-      if ret = @lmdb[:control]['objects']
+    lmdb.transaction? true do
+      if ret = lmdb[:control]['objects']
         db_decode ret, :objects
       end
     end
@@ -167,8 +178,8 @@ module Store::Digest::Meta::LMDB
   # still on record.
   # @return [Integer]
   def deleted
-    @lmdb.transaction do
-      if ret = @lmdb[:control]['deleted']
+    lmdb.transaction? true do
+      if ret = lmdb[:control]['deleted']
         db_decode ret, :deleted
       end
     end
@@ -178,8 +189,8 @@ module Store::Digest::Meta::LMDB
   # the database itself).
   # @return [Integer]
   def bytes
-    @lmdb.transaction do
-      if ret = @lmdb[:control]['bytes']
+    lmdb.transaction? true do
+      if ret = lmdb[:control]['bytes']
         db_decode ret, :bytes
       end
     end
@@ -231,10 +242,10 @@ module Store::Digest::Meta::LMDB
              end
     # find the smallest denominator
     index = params.keys.map do |k|
-      [k, @lmdb[k].size]
+      [k, lmdb[k].size]
     end.sort { |a, b| a[1] <=> b[1] }.map(&:first).first
     out = {}
-    @lmdb.transaction do
+    lmdb.transaction? true do
       if index
         # warn params.inspect
         if INTS[index]
@@ -278,7 +289,7 @@ module Store::Digest::Meta::LMDB
         end
       else
         # if we aren't filtering at all we can just obtain everything
-        @lmdb[primary].cursor do |c|
+        lmdb[primary].cursor do |c|
           while rec = c.next
             u = URI("ni:///#{primary};")
             u.digest = rec.first
@@ -290,5 +301,5 @@ module Store::Digest::Meta::LMDB
 
     # now we sort
     out.values
-  end
+    end
 end

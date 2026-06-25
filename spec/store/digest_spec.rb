@@ -113,7 +113,7 @@ RSpec.describe Store::Digest do
     # store.add should no-op the same entry added a second time
     # store.add should nevertheless update metadata if different from existing
     it 'should get something first' do
-      lmdb = subject.instance_variable_get :@lmdb
+      lmdb = subject.lmdb
 
       expect(lmdb.flags).to be_empty
       expect(lmdb.info[:numreaders]).to eq(0)
@@ -124,7 +124,7 @@ RSpec.describe Store::Digest do
     end
 
     it 'should set obj.stored? to true for a new object' do
-      lmdb = subject.instance_variable_get :@lmdb
+      lmdb = subject.lmdb
       expect(lmdb.active_txn).to be_nil
       expect(lmdb.flags).to be_empty
       expect(lmdb.info[:numreaders]).to eq(0)
