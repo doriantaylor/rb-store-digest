@@ -694,6 +694,14 @@ module Store::Digest::Meta::LMDB
       end
     end
 
+    # Close the store
+    #
+    def close_internal
+      @lmdb.sync
+      @dbs.clear
+      @lmdb.close
+    end
+
     public
 
     # Return the default time-to-live on cache entries.

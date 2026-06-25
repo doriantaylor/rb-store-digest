@@ -1,21 +1,35 @@
 RSpec.describe Store::Digest do
   before :context do
-    @store = Store::Digest.new dir: '/tmp/test-store-digest', mapsize: 2**27
+    FileUtils.rm_rf '/tmp/test-store-digest'
+    @store = Store::Digest.new dir: '/tmp/test-store-digest', mapsize: 2**27, notls: false
   end
 
   subject { @store }
 
   after :context do
     # warn "wtf running"
+    @store.close
     @store = nil
     FileUtils.rm_rf '/tmp/test-store-digest'
   end
 
   after :each do
     # pp ObjectSpace.each_object(LMDB::Transaction).to_a
+    # File.write("/tmp/maps.#{Time.now.to_i}.txt", File.read("/proc/#{Process.pid}/maps"))
     GC.compact
+    # GC.verify_compaction_references(toward: :empty)
     # GC.start
   end
+
+  # before :each do
+  #   puts "active txn before: #{@store.instance_variable_get(:@lmdb).active_txn.inspect}"
+  # end
+
+  # after :each do
+  #   puts "active txn after: #{@store.instance_variable_get(:@lmdb).active_txn.inspect}"
+  #   GC.compact
+  #   puts "active txn after compact: #{@store.instance_variable_get(:@lmdb).active_txn.inspect}"
+  # end
 
   # anyway, i will mark driver-specific tests with an asterisk *
 
@@ -98,8 +112,23 @@ RSpec.describe Store::Digest do
     # store.add should return a retrieved object (with content as a proc)
     # store.add should no-op the same entry added a second time
     # store.add should nevertheless update metadata if different from existing
+    it 'should get something first' do
+      lmdb = subject.instance_variable_get :@lmdb
+
+      expect(lmdb.flags).to be_empty
+      expect(lmdb.info[:numreaders]).to eq(0)
+      expect(lmdb.active_txn).to be_nil
+      # warn info.inspect
+      # v = lmdb.database('control').get 'version'
+      # warn v
+    end
 
     it 'should set obj.stored? to true for a new object' do
+      lmdb = subject.instance_variable_get :@lmdb
+      expect(lmdb.active_txn).to be_nil
+      expect(lmdb.flags).to be_empty
+      expect(lmdb.info[:numreaders]).to eq(0)
+
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
       entry = subject.add 'hurrdurr', scan: true

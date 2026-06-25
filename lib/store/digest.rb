@@ -144,6 +144,8 @@ class Store::Digest
 
     transaction do
 
+      # warn @lmdb.active_txn.inspect
+
       # managed temporary file handle
       tmp = temp_blob
 
@@ -274,6 +276,8 @@ class Store::Digest
 
     # aaaand bootstrap it
     setup(**options)
+
+    # warn @lmdb.info
   end
 
   attr_reader :blocksize, :mtimes, :cache_ttl
@@ -392,6 +396,10 @@ class Store::Digest
   #
   def forget obj
     remove obj, forget: true
+  end
+
+  def close
+    close_internal
   end
 
   # Determine if the store is cache-aware.

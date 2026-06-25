@@ -30,4 +30,8 @@ module Store::Digest::Driver
   def setup **options
     raise NotImplementedError, 'gotta roll your own, holmes'
   end
+
+  def close_internal
+    raise NotImplementedError, 'close_internal not implemented'
+  end
 end
