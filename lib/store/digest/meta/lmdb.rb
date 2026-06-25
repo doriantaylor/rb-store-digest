@@ -26,18 +26,20 @@ module Store::Digest::Meta::LMDB
   def meta_get_stats
     # XXX this should be a read transaction
     @lmdb.transaction true do |txn|
+      control = @lmdb[:control]
       h = %i[ctime mtime objects deleted bytes].map do |k|
-        [k, db_decode(@dbs[:control][k.to_s], k)]
+        [k, db_decode(control[k.to_s], k)]
       end.to_h
 
       # fix the times
       %i[ctime mtime].each { |t| h[t] = Time.at h[t] }
 
       # get counts on all the countables
-      h.merge!(%i[type language charset encoding].map do |d|
-                 ["#{d}s".to_sym,
-                  @dbs[d].keys.map { |k| [k, @dbs[d].cardinality(k)] }.to_h]
-               end.to_h)
+      h.merge!(
+        %i[type language charset encoding].map do |d|
+          db = @lmdb[d]
+          ["#{d}s".to_sym, db.keys.map { |k| [k, db.cardinality(k)] }.to_h]
+        end.to_h)
 
       # would love to do min/max size/dates/etc but that is going to
       # take some lower-level cursor finessing
@@ -70,21 +72,22 @@ module Store::Digest::Meta::LMDB
 
     @lmdb.transaction do
       # load up the control database
-      @dbs = { control: @lmdb.database('control', create: true) }
+      control = @lmdb.database('control', create: true)
 
       # if control is empty or version is 1, extend V1
-      if @dbs[:control].empty?
+      if control.empty?
         # set to v1 for next time
-        @dbs[:control]['version'] = ?1
+        control['version'] = ?1
         extend V1
-      elsif @dbs[:control]['version'] == ?1
+      elsif control['version'] == ?1
         extend V1
-      elsif @dbs[:control]['version'].nil?
+      elsif control['version'].nil?
         # if version is empty, extend v0
+        @dbs = { control: control }
         extend V0
       else
         # otherwise error
-        v = @dbs[:control]['version']
+        v = control['version']
         raise CorruptStateError,
           "Control database has unrecognized version #{v}"
       end
@@ -95,7 +98,7 @@ module Store::Digest::Meta::LMDB
           algos.sort != a
       else
         a = algos.sort
-        @dbs[:control]['algorithms'] = a.join ?,
+        control['algorithms'] = a.join ?,
       end
 
       if pri = primary
@@ -104,7 +107,7 @@ module Store::Digest::Meta::LMDB
           popt != pri
       else
         pri = popt
-        @dbs[:control]['primary'] = popt.to_s
+        control['primary'] = popt.to_s
       end
 
       setup_dbs
@@ -134,7 +137,7 @@ module Store::Digest::Meta::LMDB
   # @return [Array] the algorithms
   def algorithms
     @algorithms ||= @lmdb.transaction do
-      if ret = @dbs[:control]['algorithms']
+      if ret = @lmdb[:control]['algorithms']
         ret.strip.downcase.split(/\s*,+\s*/).map(&:to_sym)
       end
     end
@@ -144,7 +147,7 @@ module Store::Digest::Meta::LMDB
   # @return [Symbol] the primary algorithm
   def primary
     @primary ||= @lmdb.transaction do
-      if ret = @dbs[:control]['primary']
+      if ret = @lmdb[:control]['primary']
         ret.strip.downcase.to_sym
       end
     end
@@ -154,7 +157,7 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def objects
     @lmdb.transaction do
-      if ret = @dbs[:control]['objects']
+      if ret = @lmdb[:control]['objects']
         db_decode ret, :objects
       end
     end
@@ -165,7 +168,7 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def deleted
     @lmdb.transaction do
-      if ret = @dbs[:control]['deleted']
+      if ret = @lmdb[:control]['deleted']
         db_decode ret, :deleted
       end
     end
@@ -176,7 +179,7 @@ module Store::Digest::Meta::LMDB
   # @return [Integer]
   def bytes
     @lmdb.transaction do
-      if ret = @dbs[:control]['bytes']
+      if ret = @lmdb[:control]['bytes']
         db_decode ret, :bytes
       end
     end
@@ -228,7 +231,7 @@ module Store::Digest::Meta::LMDB
              end
     # find the smallest denominator
     index = params.keys.map do |k|
-      [k, @dbs[k].size]
+      [k, @lmdb[k].size]
     end.sort { |a, b| a[1] <=> b[1] }.map(&:first).first
     out = {}
     @lmdb.transaction do
@@ -275,7 +278,7 @@ module Store::Digest::Meta::LMDB
         end
       else
         # if we aren't filtering at all we can just obtain everything
-        @dbs[primary].cursor do |c|
+        @lmdb[primary].cursor do |c|
           while rec = c.next
             u = URI("ni:///#{primary};")
             u.digest = rec.first

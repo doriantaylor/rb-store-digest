@@ -108,7 +108,9 @@ module Store::Digest::Meta::LMDB
         (flags + [:create]).map { |flag| [flag, true] }.to_h
       end
 
-      @dbs.merge!(dbs.map { |n, f| [n, @lmdb.database(n.to_s, f)] }.to_h)
+      # XXX we don't need to do this anymore because we don't have a
+      # @dbs; we just need to make sure the databases are created
+      dbs.map { |n, f| [n, @lmdb.database(n.to_s, f)] }.to_h
     end
 
     # Encode an individual value.
@@ -150,7 +152,7 @@ module Store::Digest::Meta::LMDB
     # @return [Integer]
     #
     def last_key db, raw: false
-      db = @dbs[db] if db.is_a? Symbol
+      db = @lmdb[db] if db.is_a? Symbol
       raise ArgumentError, 'Wrong/malformed database' unless
         db.is_a? ::LMDB::Database and db.flags[:integerkey]
 
@@ -172,7 +174,7 @@ module Store::Digest::Meta::LMDB
       type = CONTROL[key.to_sym] or raise ArgumentError,
         "invalid control key #{key}"
 
-      raw = @dbs[:control][key.to_s]
+      raw = @lmdb[:control][key.to_s]
       db_decode raw, type if raw
     end
 
@@ -189,8 +191,8 @@ module Store::Digest::Meta::LMDB
       raise ArgumentError,
         "value should be instance of #{type}" unless value.is_a? type
 
-      @dbs[:control][key.to_s] = db_encode value, type unless
-        maybe && @dbs[:control].has?(key.to_s)
+      @lmdb[:control][key.to_s] = db_encode value, type unless
+        maybe && @lmdb[:control].has?(key.to_s)
     end
 
     # Increment an existing ({Integer}) control field by a value.
@@ -238,7 +240,7 @@ module Store::Digest::Meta::LMDB
       ptr = ptr.is_a?(String) ? ptr : [ptr].pack(?J)
 
 
-      @dbs[index.to_sym].put? key, ptr
+      @lmdb[index.to_sym].put? key, ptr
     end
 
     # Remove an entry from an index.
@@ -256,7 +258,7 @@ module Store::Digest::Meta::LMDB
       key = db_encode key, cls
       ptr = ptr.is_a?(String) ? ptr : [ptr].pack(?J)
 
-      @dbs[index.to_sym].delete? key, ptr
+      @lmdb[index.to_sym].delete? key, ptr
     end
 
     # the v1 record is substantively different from v0; also all the
@@ -315,7 +317,7 @@ module Store::Digest::Meta::LMDB
       uri = coerce_uri(obj) or return
 
       # now return the pointer (or nil)
-      out = @dbs[uri.algorithm][uri.digest] or return
+      out = @lmdb[uri.algorithm][uri.digest] or return
       raw ? out : out.unpack1(?J)
     end
 
@@ -364,12 +366,12 @@ module Store::Digest::Meta::LMDB
               when String then obj
               when Hash, Store::Digest::Entry then get_ptr obj, raw: true
               when Integer then [obj].pack ?J
-              when URI::NI then @dbs[obj.algorithm.to_sym][obj.digest]
+              when URI::NI then @lmdb[obj.algorithm.to_sym][obj.digest]
               else
                 raise ArgumentError, "Cannot process an #{obj.class}"
               end
 
-        if ptr && out = @dbs[:entry][ptr]
+        if ptr && out = @lmdb[:entry][ptr]
           raw ? out : inflate(out)
         end
       end
@@ -469,7 +471,7 @@ module Store::Digest::Meta::LMDB
         added  = false
         was_ts = nil
 
-        if oldrec = @dbs[:entry][ptr]
+        if oldrec = @lmdb[:entry][ptr]
           # there are only three legal operations with an existing record:
           #
           # * mark the record as a tombstone
@@ -553,7 +555,7 @@ module Store::Digest::Meta::LMDB
           # set the algo mappings
           algorithms.each do |algo|
             # warn "setting #{algo} -> #{obj[algo].hexdigest}"
-            @dbs[algo].put? obj[:digests][algo].digest, ptr
+            @lmdb[algo].put? obj[:digests][algo].digest, ptr
           end
 
           added = true
@@ -565,7 +567,7 @@ module Store::Digest::Meta::LMDB
         # update indices and control
         unless changes.empty?
           # update the record
-          @dbs[:entry][ptr] = deflate newh
+          @lmdb[:entry][ptr] = deflate newh
           # dummy oldh
           oldh ||= {}
 
@@ -632,7 +634,7 @@ module Store::Digest::Meta::LMDB
             rec[:dtime] = now
 
             # update the entry
-            @dbs[:entry][ptr] = deflate rec
+            @lmdb[:entry][ptr] = deflate rec
 
             # deal with the indices
             %i[dtime etime].each { |k| index_rm k, old, ptr } if old
@@ -677,7 +679,7 @@ module Store::Digest::Meta::LMDB
           algorithms.each do |algo|
             # XXX this *should* match?
             uri = rec[:digests][algo]
-            @dbs[algo].delete? uri.digest, ptr
+            @lmdb[algo].delete? uri.digest, ptr
           end
 
           # deal with stats
@@ -698,7 +700,7 @@ module Store::Digest::Meta::LMDB
     #
     def close_internal
       @lmdb.sync
-      @dbs.clear
+      # @dbs.clear
       @lmdb.close
     end
 
