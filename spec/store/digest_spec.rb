@@ -6,7 +6,7 @@ RSpec.describe Store::Digest do
 
   subject { @store }
 
-  after :context do
+  after :context do |context|
     # warn "wtf running"
     @store.close
     @store = nil
@@ -37,15 +37,6 @@ RSpec.describe Store::Digest do
 
     it "has a version number" do
       expect(Store::Digest::VERSION).not_to be nil
-    end
-
-    # store should work with threads
-    it 'should work with threads' do
-      require 'thread'
-      t = Thread.new do
-        subject.add 'lolz'
-      end
-      t.join
     end
 
     # store should initialize
@@ -118,16 +109,18 @@ RSpec.describe Store::Digest do
       expect(lmdb.flags).to be_empty
       expect(lmdb.info[:numreaders]).to eq(0)
       expect(lmdb.active_txn).to be_nil
-      # warn info.inspect
-      # v = lmdb.database('control').get 'version'
-      # warn v
+    end
+
+    it 'should start off empty' do
+      # warn subject.stats.to_s
+      expect(subject.stats.objects).to eq 0
     end
 
     it 'should set obj.stored? to true for a new object' do
-      lmdb = subject.lmdb
-      expect(lmdb.active_txn).to be_nil
-      expect(lmdb.flags).to be_empty
-      expect(lmdb.info[:numreaders]).to eq(0)
+      # lmdb = subject.lmdb
+      # expect(lmdb.active_txn).to be_nil
+      # expect(lmdb.flags).to be_empty
+      # expect(lmdb.info[:numreaders]).to eq(0)
 
       # store.add should set obj.fresh? to true if the object was not
       #   previously present in the store
@@ -280,4 +273,15 @@ RSpec.describe Store::Digest do
   # search parameters should be ANDed between dimensions and ORed
   # between values
 
+  context 'bastard stuff' do
+
+    # store should work with threads
+    it 'should work with threads' do
+      require 'thread'
+      t = Thread.new do
+        subject.add 'lolz', scan: true
+      end
+      t.join
+    end
+  end
 end

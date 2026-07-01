@@ -23,6 +23,8 @@ module Store::Digest::Meta::LMDB
     "sha-512": 64,
   }.freeze
 
+  LMDB_OPTS = %i[mode maxreaders maxdbs mapsize]
+
   LMDB_FLAGS =
     %i[fixedmap nosubdir nosync rdonly nometasync writemap mapasync notls]
 
@@ -65,7 +67,7 @@ module Store::Digest::Meta::LMDB
     @lmdb_opts = {
       mode: 0666 & ~umask,
       mapsize: mapsize,
-    }.merge(options.slice(*LMDB_FLAGS))
+    }.merge(options.slice(*(LMDB_OPTS + LMDB_FLAGS)))
 
     algos = options[:algorithms] || DIGESTS.keys
     raise ArgumentError, "Invalid algorithm specification #{algos}" unless

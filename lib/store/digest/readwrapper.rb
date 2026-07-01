@@ -63,7 +63,7 @@ class Store::Digest::ReadWrapper
   #  the input is, or the original input if file-handle-ey enough
   #
   def self.coerce obj, thunk: false
-    return obj if obj.is_a? self
+    return obj if [self, Store::Digest::Entry].any? { |c| obj.is_a? c }
 
     return obj.open('rb') if obj.is_a? Pathname
 
@@ -169,3 +169,6 @@ class Store::Digest::ReadWrapper
     nil # close returns nil
   end
 end
+
+# for the symbol
+class Store::Digest::Entry; end

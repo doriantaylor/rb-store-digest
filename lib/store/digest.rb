@@ -316,6 +316,8 @@ class Store::Digest
   def add obj, digests: nil, mtime: nil, type: nil, charset: nil,
       encoding: nil, language: nil, cache: false, scan: false
 
+    # warn "hmmmm #{obj.inspect}"
+
     # XXX this circumvents the integrity check
     return obj.add(self) if obj.is_a? Store::Digest::Entry
 

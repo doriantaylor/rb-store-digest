@@ -277,6 +277,7 @@ class Store::Digest::Entry
       # make sure wee also do the algorithms for parity
       @digests    = digests.transform_values(&:freeze).freeze
       @algorithms = digests.keys.to_set.freeze
+      @scanned    = true
     end
 
     # only update the type if it's more specific than the asserted one
@@ -332,9 +333,9 @@ class Store::Digest::Entry
 
   public
 
-  # Create a new object, naively recording whatever is handed
+  # Create a new object, naively recording whatever it is handed.
   #
-  # @note use {.scan} or {#scan} to populate
+  # @note use {.scan} or {#scan} to populate the digests.
   #
   # @param content [IO, String, Proc, File, Pathname, ...] some content
   # @param store [Store::Digest] the associated store, if present
@@ -360,23 +361,14 @@ class Store::Digest::Entry
       @store = store
     end
 
-
     now = Time.now
-    @mtime   = mtime || now
-    @digests = {}
-    @scanned = false
 
-    if content
-      # this will give us something suitable to scan or it'll bail
-      @content = Store::Digest::ReadWrapper.coerce content,
-        thunk: true if content
+    # this sets the empty digest hash and the scanning state to false
+    self.content = content if content
 
-      if !type and @content.respond_to?(:path) and path = @content.path
-        type = MimeMagic.by_path(@content.path)
-      end
-    end
-
-    type ||= MimeMagic[nil]
+    # we do this little ballet because `content=` may set mtime and type
+    @mtime = mtime || @mtime || now
+    type ||= @type || MimeMagic[nil]
 
     # the following can be strings or symbols:
     b = binding
@@ -418,7 +410,7 @@ class Store::Digest::Entry
         'Must initialize with either content, or a block, or both'
     end
 
-    # just make sure the times
+    # just make sure the times are in
     @ctime ||= now
     @mtime ||= mtime || @ctime
     @ptime ||= @ctime
@@ -681,21 +673,23 @@ class Store::Digest::Entry
       [store, @store].all?(&:nil?)
 
     # use the internal store if one is not supplied
-    # set the internal store if one is supplied and not present
-
     store ||= @store
     raise TypeError, 'Argument must be an instance of Store::Digest' unless
       store.is_a? Store::Digest
 
-    # set the store unless we already have one
+    # do this if not scanned
+
+    unless scanned? && store.has?(self)
+      # ok add the thing
+      hash = store.send :add_raw, @content, **meta_hash
+      merge_meta hash, content: true
+    end
+
+    # set the internal store if one is supplied and not present; do
+    # this after because calling store.has? will cause the record to
+    # be scanned, potentially against the very store, so it would be
+    # scanned by the same store twice.
     @store ||= store
-
-    # doyy obviously we need to do this
-    rewind if scanned?
-
-    # ok add the thing
-    hash = store.send :add_raw, @content, **meta_hash
-    merge_meta hash, content: true
 
     self
   end
@@ -951,13 +945,18 @@ class Store::Digest::Entry
     @algorithms ||= (@store || URI::NI).algorithms.to_set
   end
 
+  # Get the digest hash.
+  #
+  # @return [Hash] the digests
   #
   def digests
     scan
     @digests
   end
 
-  # 
+  # Get the byte size.
+  #
+  # @return [Integer] the bytes
   #
   def size
     scan
@@ -995,6 +994,23 @@ class Store::Digest::Entry
   #
   def content?
     !!@content
+  end
+
+  # Reset the content (and unset the scanned state).
+  #
+  # @param content [IO, String, Proc, File, Pathname, ...] some content
+  #
+  def content= content
+    @digests = {}
+    @scanned = false
+    @content = Store::Digest::ReadWrapper.coerce content, thunk: true
+
+    if @content.respond_to?(:path) and path = @content.path
+      warn MimeMagic.by_path path
+      @type = MimeMagic.by_path path
+    end
+
+    @mtime = @content.respond_to?(:stat) ? @content.stat.mtime : Time.now(in: ?Z)
   end
 
   # Returns the type and charset, suitable for an HTTP header.
@@ -1181,6 +1197,17 @@ class Store::Digest::Entry
     end
 
     out
+  end
+
+  def inspect
+    text = if scanned?
+             ds = digests.values.map(&:to_s).sort.join ', '
+             "size=#{size} type=#{type} (#{})"
+           else
+             "(not scanned)"
+           end
+
+    "<#{self.class} #{text}>"
   end
 end
 
