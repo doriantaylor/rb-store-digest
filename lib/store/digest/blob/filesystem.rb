@@ -74,7 +74,7 @@ module Store::Digest::Blob::FileSystem
   #
   def settle_blob bin, fh, mtime: nil, overwrite: false, direct: false
     # get the mtimes
-    mtime ||= Time.now
+    mtime ||= Time.now(in: ?Z)
     mtime = case mtime
             when Time    then mtime.to_i
             when Integer then mtime

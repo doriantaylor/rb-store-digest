@@ -86,7 +86,7 @@ class Store::Digest
   #
   def deleted? meta
     return false unless dtime = meta[:dtime]
-    cache?(meta) && dtime <= Time.now
+    cache?(meta) && dtime <= Time.now(in: ?Z)
   end
 
   # From an RFC6920 URI, get a raw hash

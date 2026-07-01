@@ -361,7 +361,7 @@ class Store::Digest::Entry
       @store = store
     end
 
-    now = Time.now
+    now = Time.now(in: ?Z)
 
     # this sets the empty digest hash and the scanning state to false
     self.content = content if content
@@ -1144,7 +1144,7 @@ class Store::Digest::Entry
   # past, then the entry is stale.
   #
   def stale?
-    cache? && @dtime && @dtime < Time.now
+    cache? && @dtime && @dtime < Time.now(in: ?Z)
   end
 
   # Just a plain old predicate to determine whether the blob has been
