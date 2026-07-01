@@ -1006,7 +1006,7 @@ class Store::Digest::Entry
     @content = Store::Digest::ReadWrapper.coerce content, thunk: true
 
     if @content.respond_to?(:path) and path = @content.path
-      warn MimeMagic.by_path path
+      # warn MimeMagic.by_path path
       @type = MimeMagic.by_path path
     end
 
