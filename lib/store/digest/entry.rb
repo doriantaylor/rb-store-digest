@@ -331,6 +331,13 @@ class Store::Digest::Entry
     end
   end
 
+  def unscan!
+    @scanned = false
+    @digests = {}
+    @type = MimeMagic[nil]
+    @size = nil
+  end
+
   public
 
   # Create a new object, naively recording whatever it is handed.
@@ -361,7 +368,8 @@ class Store::Digest::Entry
       @store = store
     end
 
-    now = Time.now(in: ?Z)
+    # get a stable `now`
+    now = Time.now in: ?Z
 
     # this sets the empty digest hash and the scanning state to false
     self.content = content if content
@@ -1001,8 +1009,8 @@ class Store::Digest::Entry
   # @param content [IO, String, Proc, File, Pathname, ...] some content
   #
   def content= content
-    @digests = {}
-    @scanned = false
+    unscan!
+
     @content = Store::Digest::ReadWrapper.coerce content, thunk: true
 
     if @content.respond_to?(:path) and path = @content.path
