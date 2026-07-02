@@ -338,6 +338,21 @@ class Store::Digest::Entry
     @size = nil
   end
 
+  def set_content content
+    unscan!
+
+    @content = Store::Digest::ReadWrapper.coerce content, thunk: true
+
+    if @content.respond_to?(:path) and path = @content.path
+      # warn MimeMagic.by_path path
+      @type = MimeMagic.by_path path
+    end
+
+    @mtime = @content.respond_to?(:stat) ? @content.stat.mtime : Time.now(in: ?Z)
+
+    nil
+  end
+
   public
 
   # Create a new object, naively recording whatever it is handed.
@@ -959,7 +974,7 @@ class Store::Digest::Entry
   #
   def digests
     scan
-    @digests
+    @digests.dup
   end
 
   # Get the byte size.
@@ -1009,16 +1024,8 @@ class Store::Digest::Entry
   # @param content [IO, String, Proc, File, Pathname, ...] some content
   #
   def content= content
-    unscan!
-
-    @content = Store::Digest::ReadWrapper.coerce content, thunk: true
-
-    if @content.respond_to?(:path) and path = @content.path
-      # warn MimeMagic.by_path path
-      @type = MimeMagic.by_path path
-    end
-
-    @mtime = @content.respond_to?(:stat) ? @content.stat.mtime : Time.now(in: ?Z)
+    # we do this because sub(sub)classes get screwed up if we don't
+    set_content content
   end
 
   # Returns the type and charset, suitable for an HTTP header.
@@ -1029,14 +1036,6 @@ class Store::Digest::Entry
     out = type.to_s
     out += ";charset=#{charset}" if charset
     out
-  end
-
-  # Determines if the object has been scanned.
-  #
-  # @return [false, true]
-  #
-  def scanned?
-    !@digests.empty?
   end
 
   def flags= val
